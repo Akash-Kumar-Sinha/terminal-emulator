@@ -3,7 +3,6 @@ use winit::event_loop::EventLoop;
 
 mod app;
 mod state;
-mod pty;
 
 fn main() {
     let event_loop = EventLoop::new().unwrap();
