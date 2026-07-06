@@ -4,7 +4,10 @@ use winit::event_loop::EventLoop;
 mod app;
 mod state;
 mod fonts;
+mod pty;
 mod renderer;
+mod terminal;
+mod theme;
 
 fn main() {
     let event_loop = EventLoop::new().unwrap();

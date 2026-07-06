@@ -1,5 +1,7 @@
-use crate::fonts::TextPipeline;
-use crate::renderer::rect::RectPipeline;
+use crate::fonts::FontManager;
+use crate::renderer::glyph::{ChromeRect, ChromeText, GlyphRenderer};
+use crate::terminal::TerminalGrid;
+use crate::theme::Theme;
 
 pub struct WgpuState {
     surface: wgpu::Surface<'static>,
@@ -8,7 +10,7 @@ pub struct WgpuState {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    rect: RectPipeline,
+    glyphs: GlyphRenderer,
 }
 
 impl WgpuState {
@@ -18,9 +20,20 @@ impl WgpuState {
         device: wgpu::Device,
         queue: wgpu::Queue,
         config: wgpu::SurfaceConfiguration,
-        rect: RectPipeline,
+        glyphs: GlyphRenderer,
     ) -> Self {
-        Self { surface, adapter, device, queue, config, rect }
+        Self {
+            surface,
+            adapter,
+            device,
+            queue,
+            config,
+            glyphs,
+        }
+    }
+
+    pub fn size(&self) -> (u32, u32) {
+        (self.config.width, self.config.height)
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -32,7 +45,18 @@ impl WgpuState {
         self.surface.configure(&self.device, &self.config);
     }
 
-    pub fn render(&mut self, text_pipeline: &mut TextPipeline) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn render(
+        &mut self,
+        fonts: &FontManager,
+        theme: &Theme,
+        grid: Option<&TerminalGrid>,
+        cursor: Option<(usize, usize)>,
+        rects: &[ChromeRect],
+        texts: &[ChromeText],
+        origin_x: f32,
+        origin_y: f32,
+    ) {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
@@ -57,20 +81,24 @@ impl WgpuState {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        text_pipeline.prepare(
+        self.glyphs.prepare(
             &self.device,
             &self.queue,
-            self.config.width,
-            self.config.height,
-            12.0,
+            grid,
+            fonts,
+            theme,
+            cursor,
+            rects,
+            texts,
+            origin_x,
+            origin_y,
+            self.config.width as f32,
+            self.config.height as f32,
         );
 
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-
-        let sw = self.config.width as f32;
-        let sh = self.config.height as f32;
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -79,7 +107,7 @@ impl WgpuState {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }),
+                        load: wgpu::LoadOp::Clear(theme.clear_color()),
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,
@@ -90,22 +118,7 @@ impl WgpuState {
                 multiview_mask: None,
             });
 
-            // bottom bar: x=0, y=screen_h-80, width=screen_w, height=80
-            self.rect.draw(
-                &self.queue,
-                &mut pass,
-                0.0,              // x
-                sh - 80.0,        // y (top-left of rect, pinned to bottom)
-                sw,               // width
-                80.0,             // height
-                1.0,              // border_width
-                [0.0, 0.0, 0.0, 0.0],    // bg_color
-                [0.3, 0.3, 0.3, 1.0],    // border_color
-                sw,
-                sh,
-            );
-
-            text_pipeline.render(&mut pass);
+            self.glyphs.draw(&mut pass);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
