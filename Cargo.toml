@@ -1,8 +1,32 @@
+[[bin]]
+name = "aks-terminal"
+path = "src/main.rs"
+
 [package]
-name = "terminal_emulator"
+name = "aks_terminal"
 version = "0.1.0"
 edition = "2024"
+description = "A GPU-accelerated terminal emulator written in Rust"
+license = "MIT"
+authors = ["Akash Kumar Sinha <aks.krsinha@gmail.com>"]
 
+[package.metadata.deb]
+maintainer = "Akash Kumar Sinha <aks.krsinha@gmail.com>"
+depends = "$auto"
+section = "utils"
+priority = "optional"
+assets = [
+    [
+        "target/release/aks-terminal",
+        "usr/bin/aks-terminal",
+        "755",
+    ],
+    [
+        "assets/aks-terminal.desktop",
+        "usr/share/applications/aks-terminal.desktop",
+        "644",
+    ],
+]
 [dependencies]
 anyhow = "1"
 bytemuck = { version = "1", features = ["derive"] }

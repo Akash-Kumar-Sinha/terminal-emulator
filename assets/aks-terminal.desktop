@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Aks Terminal
+Comment=A GPU-accelerated terminal emulator
+Exec=aks-terminal
+Terminal=false
+Categories=System;TerminalEmulator;
