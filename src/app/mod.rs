@@ -226,17 +226,16 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::RedrawRequested => {
-                let cell_h = self.fonts.as_ref().map(|f| f.cell_h).unwrap_or(0.0);
                 let screen_h = self.state.as_ref().map(|s| s.size().1).unwrap_or(0) as f32;
+                let header_h = self.header.height;
                 for block in self.block.iter_mut().filter_map(|b| b.as_mut()) {
                     block.shell.pump();
                     if block.shell.is_closed() {
                         event_loop.exit();
                         return;
                     }
-                    let content_h = block.shell.content_rows() as f32 * cell_h;
-                    block.height = content_h as u32;
-                    block.y = screen_h - block.height as f32;
+                    block.y = header_h;
+                    block.height = (screen_h - header_h).max(0.0) as u32;
                 }
 
                 if let (Some(state), Some(fonts)) = (self.state.as_mut(), self.fonts.as_ref()) {
