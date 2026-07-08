@@ -2,8 +2,9 @@ use std::collections::HashMap;
 
 use bytemuck::{Pod, Zeroable};
 
+use crate::app::block::Block;
+use crate::app::ui::header::{Header, HeaderButton};
 use crate::fonts::FontManager;
-use crate::terminal::TerminalGrid;
 use crate::theme::Theme;
 
 pub struct ChromeRect {
@@ -85,6 +86,7 @@ pub struct GlyphRenderer {
 
     cache: HashMap<(char, bool, bool), Option<GlyphInfo>>,
     solid_uv: [f32; 2],
+    circle_uv: [[f32; 2]; 2],
     pack_x: u32,
     pack_y: u32,
     shelf_h: u32,
@@ -238,7 +240,7 @@ impl GlyphRenderer {
             mapped_at_creation: false,
         });
 
-        Self {
+        let mut renderer = Self {
             pipeline,
             bind_group,
             texture,
@@ -247,9 +249,56 @@ impl GlyphRenderer {
             vertex_count: 0,
             cache: HashMap::new(),
             solid_uv,
+            circle_uv: [[0.0, 0.0], [0.0, 0.0]],
             pack_x: 2,
             pack_y: 0,
             shelf_h: 0,
+        };
+        renderer.bake_circle(queue);
+        renderer
+    }
+
+    fn bake_circle(&mut self, queue: &wgpu::Queue) {
+        const D: u32 = 64;
+        let r = D as f32 / 2.0;
+        let mut buf = vec![0u8; (D * D) as usize];
+        for py in 0..D {
+            for px in 0..D {
+                let dx = px as f32 + 0.5 - r;
+                let dy = py as f32 + 0.5 - r;
+                let dist = (dx * dx + dy * dy).sqrt();
+                let cov = (r - dist + 0.5).clamp(0.0, 1.0);
+                buf[(py * D + px) as usize] = (cov * 255.0) as u8;
+            }
+        }
+        if let Some((x, y)) = self.pack(D, D) {
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x, y, z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &buf,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(D),
+                    rows_per_image: Some(D),
+                },
+                wgpu::Extent3d {
+                    width: D,
+                    height: D,
+                    depth_or_array_layers: 1,
+                },
+            );
+            let atlas = ATLAS_SIZE as f32;
+            self.circle_uv = [
+                [(x as f32 + 0.5) / atlas, (y as f32 + 0.5) / atlas],
+                [
+                    (x as f32 + D as f32 - 0.5) / atlas,
+                    (y as f32 + D as f32 - 0.5) / atlas,
+                ],
+            ];
         }
     }
 
@@ -337,14 +386,10 @@ impl GlyphRenderer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        grid: Option<&TerminalGrid>,
+        header: &Header,
+        blocks: &[&Block],
         fonts: &FontManager,
         theme: &Theme,
-        cursor: Option<(usize, usize)>,
-        rects: &[ChromeRect],
-        texts: &[ChromeText],
-        origin_x: f32,
-        origin_y: f32,
         screen_w: f32,
         screen_h: f32,
     ) {
@@ -377,19 +422,52 @@ impl GlyphRenderer {
             verts.push(v([l, b], [uv_min[0], uv_max[1]]));
         };
         let solid = self.solid_uv;
+        let circle = self.circle_uv;
 
-        if let Some(grid) = grid {
-            for (row_idx, row) in grid.lines().iter().enumerate() {
+        for block in blocks {
+            let grid = block.shell.grid();
+            let lines = grid.visible_lines();
+            let cursor = if block.shell.scroll_offset() == 0 {
+                Some(block.shell.cursor())
+            } else {
+                None
+            };
+
+            push_quad(
+                block.x,
+                block.y,
+                block.x + block.width as f32,
+                block.y + block.height as f32,
+                solid,
+                solid,
+                block.bg_color,
+            );
+
+            for (row_idx, row) in lines.iter().enumerate() {
                 for (col_idx, cell) in row.iter().enumerate() {
                     if let Some(bg) = theme.resolve_bg(cell.bg) {
-                        let x0 = origin_x + col_idx as f32 * cell_w;
-                        let y0 = origin_y + row_idx as f32 * cell_h;
+                        let x0 = block.x + col_idx as f32 * cell_w;
+                        let y0 = block.y + row_idx as f32 * cell_h;
                         push_quad(x0, y0, x0 + cell_w, y0 + cell_h, solid, solid, bg);
                     }
                 }
             }
 
-            for (row_idx, row) in grid.lines().iter().enumerate() {
+            if let Some((crow, ccol)) = cursor {
+                let x0 = block.x + ccol as f32 * cell_w;
+                let y0 = block.y + crow as f32 * cell_h;
+                push_quad(
+                    x0,
+                    y0,
+                    x0 + cell_w,
+                    y0 + cell_h,
+                    solid,
+                    solid,
+                    theme.cursor,
+                );
+            }
+
+            for (row_idx, row) in lines.iter().enumerate() {
                 for (col_idx, cell) in row.iter().enumerate() {
                     if cell.ch == ' ' || cell.ch == '\0' {
                         continue;
@@ -398,9 +476,13 @@ impl GlyphRenderer {
                     else {
                         continue;
                     };
-                    let fg = theme.resolve_fg(cell.fg, cell.bold);
-                    let x0 = origin_x + col_idx as f32 * cell_w + info.bearing_left;
-                    let y0 = origin_y + row_idx as f32 * cell_h + ascent + info.bearing_top;
+                    let fg = if cursor == Some((row_idx, col_idx)) {
+                        theme.cursor_text
+                    } else {
+                        theme.resolve_fg(cell.fg, cell.bold)
+                    };
+                    let x0 = block.x + col_idx as f32 * cell_w + info.bearing_left;
+                    let y0 = block.y + row_idx as f32 * cell_h + ascent + info.bearing_top;
                     push_quad(
                         x0,
                         y0,
@@ -413,45 +495,83 @@ impl GlyphRenderer {
                 }
             }
 
-            if let Some((crow, ccol)) = cursor {
-                let mut color = theme.cursor_rgba();
-                color[3] = 0.45;
-                let x0 = origin_x + ccol as f32 * cell_w;
-                let y0 = origin_y + crow as f32 * cell_h;
-                push_quad(x0, y0, x0 + cell_w, y0 + cell_h, solid, solid, color);
+            if block.border_top {
+                push_quad(
+                    block.x,
+                    block.y,
+                    block.x + block.width as f32,
+                    block.y + block.border_thickness,
+                    solid,
+                    solid,
+                    block.border_color,
+                );
+            }
+            if block.border_bottom {
+                let y1 = block.y + block.height as f32;
+                push_quad(
+                    block.x,
+                    y1 - block.border_thickness,
+                    block.x + block.width as f32,
+                    y1,
+                    solid,
+                    solid,
+                    block.border_color,
+                );
             }
         }
 
-        for rect in rects {
-            push_quad(
-                rect.x,
-                rect.y,
-                rect.x + rect.w,
-                rect.y + rect.h,
-                solid,
-                solid,
-                rect.color,
-            );
-        }
-        for run in texts {
-            let mut cx = run.x;
-            for ch in run.text.chars() {
-                if ch != ' ' {
-                    if let Some(info) = self.glyph(queue, fonts, ch, run.bold, false) {
-                        let gx = cx + info.bearing_left;
-                        let gy = run.y + ascent + info.bearing_top;
-                        push_quad(
-                            gx,
-                            gy,
-                            gx + info.width,
-                            gy + info.height,
-                            info.uv_min,
-                            info.uv_max,
-                            run.color,
-                        );
-                    }
+        push_quad(0.0, 0.0, screen_w, header.height, solid, solid, header.bg_color);
+
+        let title_y = (header.height - cell_h) / 2.0;
+        let mut cx = 12.0;
+        for ch in header.title.chars() {
+            if ch != ' ' {
+                if let Some(info) = self.glyph(queue, fonts, ch, false, false) {
+                    let gx = cx + info.bearing_left;
+                    let gy = title_y + ascent + info.bearing_top;
+                    push_quad(
+                        gx,
+                        gy,
+                        gx + info.width,
+                        gy + info.height,
+                        info.uv_min,
+                        info.uv_max,
+                        header.title_color,
+                    );
                 }
-                cx += cell_w;
+            }
+            cx += cell_w;
+        }
+
+        for btn in [
+            HeaderButton::Minimize,
+            HeaderButton::Maximize,
+            HeaderButton::Close,
+        ] {
+            let (bx, by, bw, bh) = header.button_rect(btn, screen_w);
+            if header.hovered == Some(btn) {
+                let hbg = if btn == HeaderButton::Close {
+                    header.close_hover
+                } else {
+                    header.button_hover
+                };
+                let d = (bw.min(bh) - 10.0).max(4.0);
+                let sx = bx + (bw - d) / 2.0;
+                let sy = by + (bh - d) / 2.0;
+                push_quad(sx, sy, sx + d, sy + d, circle[0], circle[1], hbg);
+            }
+            if let Some(info) = self.glyph(queue, fonts, Header::icon(btn), false, false) {
+                let gx = bx + (bw - info.width) / 2.0;
+                let gy = by + (bh - info.height) / 2.0;
+                push_quad(
+                    gx,
+                    gy,
+                    gx + info.width,
+                    gy + info.height,
+                    info.uv_min,
+                    info.uv_max,
+                    header.icon_color,
+                );
             }
         }
 

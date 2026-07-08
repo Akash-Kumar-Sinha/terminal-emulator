@@ -2,18 +2,30 @@ use std::sync::Arc;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, KeyEvent, Modifiers, WindowEvent};
+use winit::event::{
+    ElementState, KeyEvent, Modifiers, MouseButton, MouseScrollDelta, WindowEvent,
+};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
+use crate::app::block::Block;
+use crate::app::ui::header::{Header, HeaderButton};
 use crate::fonts::FontManager;
 use crate::renderer::glyph::GlyphRenderer;
 use crate::state::WgpuState;
 use crate::terminal::Terminal;
 use crate::theme::Theme;
 
-const MARGIN: f32 = 8.0;
+pub mod block;
+pub mod ui;
+
+const MARGIN: f32 = 2.0;
+const MIN_BLOCK_HEIGHT: f32 = 100.0;
+
+fn max_block_height(window_h: u32, header_h: f32) -> f32 {
+    (window_h as f32 - header_h).max(MIN_BLOCK_HEIGHT)
+}
 
 #[derive(Default)]
 pub struct App {
@@ -21,8 +33,10 @@ pub struct App {
     state: Option<WgpuState>,
     fonts: Option<FontManager>,
     theme: Theme,
-    terminal: Option<Terminal>,
     modifiers: ModifiersState,
+    block: Vec<Option<Block>>,
+    header: Header,
+    cursor_pos: (f32, f32),
 }
 
 fn grid_dims(width: u32, height: u32, fonts: &FontManager) -> (usize, usize) {
@@ -44,6 +58,7 @@ impl ApplicationHandler for App {
             .create_window(
                 Window::default_attributes()
                     .with_title("AKS emulator")
+                    .with_decorations(false)
                     .with_inner_size(window_size),
             )
             .unwrap();
@@ -80,7 +95,10 @@ impl ApplicationHandler for App {
         let fonts = FontManager::new();
         let glyphs = GlyphRenderer::new(&device, &queue, format);
 
-        let (rows, cols) = grid_dims(config.width, config.height, &fonts);
+        let block_width = size.width;
+
+        let max_h = max_block_height(size.height, self.header.height);
+        let (rows, cols) = grid_dims(block_width, max_h as u32, &fonts);
         let terminal = match Terminal::new(rows, cols) {
             Ok(t) => Some(t),
             Err(e) => {
@@ -88,11 +106,27 @@ impl ApplicationHandler for App {
                 None
             }
         };
+        let block = Some(Block::new(
+            Some(block_width),
+            Some(MIN_BLOCK_HEIGHT as u32),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            terminal.unwrap(),
+        ));
 
         self.window = Some(window.clone());
-        self.state = Some(WgpuState::new(surface, adapter, device, queue, config, glyphs));
+        self.state = Some(WgpuState::new(
+            surface, adapter, device, queue, config, glyphs,
+        ));
         self.fonts = Some(fonts);
-        self.terminal = terminal;
+        self.block.push(block);
 
         window.request_redraw();
     }
@@ -112,10 +146,11 @@ impl ApplicationHandler for App {
 
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {
-                    if let (Some(terminal), Some(bytes)) =
-                        (self.terminal.as_mut(), encode_key(&event, self.modifiers))
-                    {
-                        terminal.send(&bytes);
+                    if let (Some(block), Some(bytes)) = (
+                        self.block.first_mut().and_then(|b| b.as_mut()),
+                        encode_key(&event, self.modifiers),
+                    ) {
+                        block.shell.send(&bytes);
                     }
                 }
             }
@@ -124,39 +159,90 @@ impl ApplicationHandler for App {
                 if let Some(state) = self.state.as_mut() {
                     state.resize(new_size.width, new_size.height);
                 }
-                if let (Some(state), Some(fonts), Some(terminal)) =
-                    (self.state.as_ref(), self.fonts.as_ref(), self.terminal.as_mut())
-                {
-                    let (w, h) = state.size();
-                    let (rows, cols) = grid_dims(w, h, fonts);
-                    terminal.resize(rows, cols);
+                let max_h = max_block_height(new_size.height, self.header.height);
+                if let Some(fonts) = self.fonts.as_ref() {
+                    for block in self.block.iter_mut().filter_map(|b| b.as_mut()) {
+                        block.width = new_size.width;
+                        let (rows, cols) = grid_dims(block.width, max_h as u32, fonts);
+                        block.shell.resize(rows, cols);
+                    }
+                }
+            }
+
+            WindowEvent::MouseWheel { delta, .. } => {
+                let cell_h = self.fonts.as_ref().map(|f| f.cell_h).unwrap_or(16.0);
+                let lines = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    MouseScrollDelta::PixelDelta(p) => (p.y as f32) / cell_h,
+                };
+                if let Some(block) = self.block.first_mut().and_then(|b| b.as_mut()) {
+                    if lines > 0.0 {
+                        block.shell.scroll_up(lines.ceil() as usize); // wheel up → into history
+                    } else if lines < 0.0 {
+                        block.shell.scroll_down((-lines).ceil() as usize);
+                    }
+                }
+            }
+
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor_pos = (position.x as f32, position.y as f32);
+                let w = self.state.as_ref().map(|s| s.size().0).unwrap_or(0) as f32;
+                let hovered = self.header.hit_test(self.cursor_pos.0, self.cursor_pos.1, w);
+                if hovered != self.header.hovered {
+                    self.header.hovered = hovered;
+                    if let Some(window) = self.window.as_ref() {
+                        window.request_redraw();
+                    }
+                }
+            }
+
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => {
+                let w = self.state.as_ref().map(|s| s.size().0).unwrap_or(0) as f32;
+                let (mx, my) = self.cursor_pos;
+                match self.header.hit_test(mx, my, w) {
+                    Some(HeaderButton::Minimize) => {
+                        if let Some(win) = self.window.as_ref() {
+                            win.set_minimized(true);
+                        }
+                    }
+                    Some(HeaderButton::Maximize) => {
+                        if let Some(win) = self.window.as_ref() {
+                            win.set_maximized(!win.is_maximized());
+                        }
+                    }
+                    Some(HeaderButton::Close) => event_loop.exit(),
+                    None => {
+                        if self.header.in_drag_region(mx, my, w) {
+                            if let Some(win) = self.window.as_ref() {
+                                let _ = win.drag_window();
+                            }
+                        }
+                    }
                 }
             }
 
             WindowEvent::RedrawRequested => {
-                if let Some(terminal) = self.terminal.as_mut() {
-                    terminal.pump();
-                    if terminal.is_closed() {
+                let cell_h = self.fonts.as_ref().map(|f| f.cell_h).unwrap_or(0.0);
+                let screen_h = self.state.as_ref().map(|s| s.size().1).unwrap_or(0) as f32;
+                for block in self.block.iter_mut().filter_map(|b| b.as_mut()) {
+                    block.shell.pump();
+                    if block.shell.is_closed() {
                         event_loop.exit();
                         return;
                     }
+                    let content_h = block.shell.content_rows() as f32 * cell_h;
+                    block.height = content_h as u32;
+                    block.y = screen_h - block.height as f32;
                 }
 
                 if let (Some(state), Some(fonts)) = (self.state.as_mut(), self.fonts.as_ref()) {
-                    let (grid, cursor) = match self.terminal.as_ref() {
-                        Some(t) => (Some(t.grid()), Some(t.cursor())),
-                        None => (None, None),
-                    };
-                    state.render(
-                        fonts,
-                        &self.theme,
-                        grid,
-                        cursor,
-                        &[],
-                        &[],
-                        MARGIN,
-                        MARGIN,
-                    );
+                    let blocks: Vec<&Block> =
+                        self.block.iter().filter_map(|b| b.as_ref()).collect();
+                    state.render(fonts, &self.theme, &self.header, &blocks);
                 }
 
                 if let Some(window) = self.window.as_ref() {

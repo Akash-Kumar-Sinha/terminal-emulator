@@ -1,6 +1,7 @@
+use crate::app::block::Block;
+use crate::app::ui::header::Header;
 use crate::fonts::FontManager;
-use crate::renderer::glyph::{ChromeRect, ChromeText, GlyphRenderer};
-use crate::terminal::TerminalGrid;
+use crate::renderer::glyph::GlyphRenderer;
 use crate::theme::Theme;
 
 pub struct WgpuState {
@@ -45,17 +46,12 @@ impl WgpuState {
         self.surface.configure(&self.device, &self.config);
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         fonts: &FontManager,
         theme: &Theme,
-        grid: Option<&TerminalGrid>,
-        cursor: Option<(usize, usize)>,
-        rects: &[ChromeRect],
-        texts: &[ChromeText],
-        origin_x: f32,
-        origin_y: f32,
+        header: &Header,
+        blocks: &[&Block],
     ) {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
@@ -84,14 +80,10 @@ impl WgpuState {
         self.glyphs.prepare(
             &self.device,
             &self.queue,
-            grid,
+            header,
+            blocks,
             fonts,
             theme,
-            cursor,
-            rects,
-            texts,
-            origin_x,
-            origin_y,
             self.config.width as f32,
             self.config.height as f32,
         );

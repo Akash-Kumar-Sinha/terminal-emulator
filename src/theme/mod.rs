@@ -21,7 +21,13 @@ pub enum Color {
 pub struct Theme {
     pub background: [f32; 4],
     pub foreground: [f32; 4],
+    pub border: [f32; 4],
     pub cursor: [f32; 4],
+    pub header_bg: [f32; 4],
+    pub header_title: [f32; 4],
+    pub header_icon: [f32; 4],
+    pub header_button_hover: [f32; 4],
+    pub header_close_hover: [f32; 4],
     pub cursor_text: [f32; 4],
     pub selection: [f32; 4],
     pub ansi: [[f32; 4]; 16],
@@ -37,33 +43,35 @@ impl Theme {
     pub fn modern_dark() -> Self {
         Self {
             background: rgb(0, 0, 0),
+            border: rgb(0, 0, 0),
             foreground: rgb(236, 236, 236),
             cursor: rgb(9, 106, 185),
+            header_bg: rgb(1, 1, 1),
+            header_title: rgb(236, 236, 236),
+            header_icon: rgb(236, 236, 236),
+            header_button_hover: rgb(5, 5, 5),
+            header_close_hover: rgb(184, 11, 19),
             cursor_text: rgb(30, 33, 36),
             selection: rgb(46, 51, 59),
             ansi: [
-                rgb(46, 52, 54),
-                rgb(222, 32, 48),
-                rgb(97, 203, 22),
-                rgb(225, 152, 16),
-                rgb(9, 136, 240),
-                rgb(170, 6, 220),
-                rgb(5, 179, 202),
-                rgb(197, 200, 204),
-                rgb(3, 59, 164),
-                rgb(240, 7, 30),
-                rgb(103, 228, 7),
-                rgb(233, 153, 6),
-                rgb(4, 138, 241),
-                rgb(180, 5, 239),
-                rgb(7, 197, 222),
+                rgb(43, 43, 43),
+                rgb(213, 63, 61),
+                rgb(91, 189, 78),
+                rgb(220, 173, 60),
+                rgb(40, 110, 230),
+                rgb(196, 96, 209),
+                rgb(38, 178, 178),
+                rgb(200, 200, 205),
+                rgb(108, 112, 122),
+                rgb(232, 84, 74),
+                rgb(110, 208, 92),
+                rgb(233, 190, 90),
+                rgb(58, 138, 247),
+                rgb(214, 128, 226),
+                rgb(58, 196, 196),
                 rgb(255, 255, 255),
             ],
         }
-    }
-
-    pub fn background_rgba(&self) -> [f32; 4] {
-        self.background
     }
 
     pub fn clear_color(&self) -> wgpu::Color {
@@ -74,26 +82,6 @@ impl Theme {
             b: srgb_to_linear(b) as f64,
             a: a as f64,
         }
-    }
-
-    pub fn foreground_rgba(&self) -> [f32; 4] {
-        self.foreground
-    }
-
-    pub fn cursor_rgba(&self) -> [f32; 4] {
-        self.cursor
-    }
-
-    pub fn cursor_text_rgba(&self) -> [f32; 4] {
-        self.cursor_text
-    }
-
-    pub fn selection_rgba(&self) -> [f32; 4] {
-        self.selection
-    }
-
-    pub fn ansi_rgba(&self, idx: usize) -> [f32; 4] {
-        self.ansi[idx]
     }
 
     pub fn ansi_256_rgba(&self, idx: u8) -> [f32; 4] {

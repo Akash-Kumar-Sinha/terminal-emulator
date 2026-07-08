@@ -71,6 +71,8 @@ pub struct TerminalGrid {
     cursor_col: usize,
     pen: Pen,
     wrap_pending: bool,
+    scrollback: Vec<Vec<Cell>>,
+    scroll_offset: usize,
 }
 
 impl TerminalGrid {
@@ -85,6 +87,8 @@ impl TerminalGrid {
             cursor_col: 0,
             pen: Pen::default(),
             wrap_pending: false,
+            scrollback: Vec::new(),
+            scroll_offset: 0,
         }
     }
 
@@ -96,8 +100,50 @@ impl TerminalGrid {
         (self.cursor_row, self.cursor_col)
     }
 
+    pub fn scroll_up(&mut self) {
+        let line = self.lines.remove(0);
+        self.scrollback.push(line); // was: dropped
+        self.lines.push(vec![Cell::default(); self.cols]);
+    }
+
+    pub fn visible_lines(&self) -> Vec<&Vec<Cell>> {
+        let total = self.scrollback.len() + self.lines.len();
+        let end = total.saturating_sub(self.scroll_offset);
+        let start = end.saturating_sub(self.rows);
+        (start..end)
+            .map(|i| {
+                if i < self.scrollback.len() {
+                    &self.scrollback[i]
+                } else {
+                    &self.lines[i - self.scrollback.len()]
+                }
+            })
+            .collect()
+    }
+
+    pub fn scroll_offset(&self) -> usize {
+        self.scroll_offset
+    }
+
+    pub fn scroll_up_view(&mut self, n: usize) {
+        self.scroll_offset = (self.scroll_offset + n).min(self.scrollback.len());
+    }
+    pub fn scroll_down_view(&mut self, n: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(n);
+    }
+
     pub fn size(&self) -> (usize, usize) {
         (self.rows, self.cols)
+    }
+
+    pub fn content_rows(&self) -> usize {
+        let mut last = 0;
+        for (i, line) in self.lines.iter().enumerate() {
+            if line.iter().any(|c| c.ch != ' ' && c.ch != '\0') {
+                last = i + 1;
+            }
+        }
+        last.max(1)
     }
 
     pub fn resize(&mut self, rows: usize, cols: usize) {
@@ -126,11 +172,6 @@ impl TerminalGrid {
         self.wrap_pending = false;
     }
 
-    fn scroll_up(&mut self) {
-        self.lines.remove(0);
-        self.lines.push(vec![Cell::default(); self.cols]);
-    }
-
     fn newline(&mut self) {
         if self.cursor_row + 1 >= self.rows {
             self.scroll_up();
@@ -140,6 +181,7 @@ impl TerminalGrid {
     }
 
     fn put_char(&mut self, ch: char) {
+        self.scroll_offset = 0;
         if self.wrap_pending {
             self.cursor_col = 0;
             self.newline();
@@ -413,6 +455,26 @@ impl Terminal {
 
     pub fn cursor(&self) -> (usize, usize) {
         self.grid.cursor()
+    }
+
+    pub fn content_rows(&self) -> usize {
+        self.grid.content_rows()
+    }
+
+    pub fn visible_lines(&self) -> Vec<&Vec<Cell>> {
+        self.grid.visible_lines()
+    }
+
+    pub fn scroll_offset(&self) -> usize {
+        self.grid.scroll_offset()
+    }
+
+    pub fn scroll_up(&mut self, n: usize) {
+        self.grid.scroll_up_view(n);
+    }
+
+    pub fn scroll_down(&mut self, n: usize) {
+        self.grid.scroll_down_view(n);
     }
 
     pub fn is_closed(&self) -> bool {
