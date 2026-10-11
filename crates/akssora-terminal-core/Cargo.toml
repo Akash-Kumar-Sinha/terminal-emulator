@@ -1,0 +1,14 @@
+[package]
+name = "akssora-terminal-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Core terminal controller uniting PTY, parser, and screen for Akssora"
+
+[dependencies]
+akssora-terminal-config.workspace = true
+akssora-terminal-parser.workspace = true
+akssora-terminal-pty.workspace = true
+akssora-terminal-screen.workspace = true
+anyhow.workspace = true

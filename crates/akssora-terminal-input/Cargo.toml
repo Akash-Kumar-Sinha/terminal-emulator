@@ -1,0 +1,10 @@
+[package]
+name = "akssora-terminal-input"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Keyboard and mouse input handling and encoding for Akssora"
+
+[dependencies]
+winit.workspace = true

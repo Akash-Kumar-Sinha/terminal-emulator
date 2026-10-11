@@ -1,0 +1,9 @@
+[package]
+name = "akssora-api-testing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Integrated API testing environment and HTTP request runner for Akssora"
+
+[dependencies]

@@ -1,0 +1,10 @@
+[package]
+name = "akssora-terminal-screen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Terminal screen grid, cells, and scrollback management for Akssora"
+
+[dependencies]
+akssora-terminal-config.workspace = true

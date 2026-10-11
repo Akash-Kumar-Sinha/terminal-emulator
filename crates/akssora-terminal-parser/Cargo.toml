@@ -1,0 +1,12 @@
+[package]
+name = "akssora-terminal-parser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "ANSI/VT sequence parser and dispatcher for Akssora"
+
+[dependencies]
+akssora-terminal-config.workspace = true
+akssora-terminal-screen.workspace = true
+vte.workspace = true

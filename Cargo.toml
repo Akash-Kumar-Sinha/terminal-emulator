@@ -1,37 +1,24 @@
-[[bin]]
-name = "aks-terminal"
-path = "src/main.rs"
+[workspace]
+resolver = "2"
+members = [
+    "crates/*",
+]
+default-members = [
+    "crates/akssora-terminal-app",
+]
 
-[package]
-name = "aks_terminal"
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
-description = "A GPU-accelerated terminal emulator written in Rust"
 license = "MIT"
 authors = ["Akash Kumar Sinha <aks.krsinha@gmail.com>"]
+repository = "https://github.com/Akash-Kumar-Sinha/akssora"
+description = "A GPU-accelerated terminal emulator written in Rust"
 
-[package.metadata.deb]
-maintainer = "Akash Kumar Sinha <aks.krsinha@gmail.com>"
-depends = "$auto"
-section = "utils"
-priority = "optional"
-assets = [
-    [
-        "target/release/aks-terminal",
-        "usr/bin/aks-terminal",
-        "755",
-    ],
-    [
-        "assets/aks-terminal.desktop",
-        "usr/share/applications/aks-terminal.desktop",
-        "644",
-    ],
-]
-[dependencies]
+[workspace.dependencies]
 anyhow = "1"
 bytemuck = { version = "1", features = ["derive"] }
 font-kit = "0.14.3"
-glyphon = "0.11.0"
 pathfinder_geometry = "0.5"
 pollster = "0.4.0"
 portable-pty = "0.9.0"
@@ -39,3 +26,23 @@ rand = "0.10.2"
 vte = "0.15"
 wgpu = "29.0.3"
 winit = "0.30.13"
+
+# Internal workspace crates - Terminal core subsystem
+akssora-terminal-config = { path = "crates/akssora-terminal-config" }
+akssora-terminal-pty = { path = "crates/akssora-terminal-pty" }
+akssora-terminal-screen = { path = "crates/akssora-terminal-screen" }
+akssora-terminal-parser = { path = "crates/akssora-terminal-parser" }
+akssora-terminal-core = { path = "crates/akssora-terminal-core" }
+akssora-terminal-input = { path = "crates/akssora-terminal-input" }
+akssora-terminal-ui = { path = "crates/akssora-terminal-ui" }
+akssora-terminal-renderer = { path = "crates/akssora-terminal-renderer" }
+akssora-terminal-app = { path = "crates/akssora-terminal-app" }
+
+# Internal workspace crates - Future feature extensions
+akssora-editor = { path = "crates/akssora-editor" }
+akssora-file-explorer = { path = "crates/akssora-file-explorer" }
+akssora-git = { path = "crates/akssora-git" }
+akssora-plugin = { path = "crates/akssora-plugin" }
+akssora-extensions = { path = "crates/akssora-extensions" }
+akssora-api-testing = { path = "crates/akssora-api-testing" }
+akssora-lang-tools = { path = "crates/akssora-lang-tools" }

@@ -1,0 +1,29 @@
+[package]
+name = "akssora-terminal-app"
+default-run = "akssora"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Application shell and binary entry point for Akssora terminal emulator"
+
+[[bin]]
+name = "akssora"
+path = "src/main.rs"
+
+[[bin]]
+name = "akssora-terminal"
+path = "src/bin/akssora-terminal.rs"
+
+[dependencies]
+akssora-terminal-config.workspace = true
+akssora-terminal-core.workspace = true
+akssora-terminal-input.workspace = true
+akssora-terminal-parser.workspace = true
+akssora-terminal-pty.workspace = true
+akssora-terminal-renderer.workspace = true
+akssora-terminal-screen.workspace = true
+akssora-terminal-ui.workspace = true
+pollster.workspace = true
+wgpu.workspace = true
+winit.workspace = true

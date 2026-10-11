@@ -1,0 +1,9 @@
+[package]
+name = "akssora-terminal-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Configuration and theme management for Akssora terminal"
+
+[dependencies]

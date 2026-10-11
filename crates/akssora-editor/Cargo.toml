@@ -1,0 +1,10 @@
+[package]
+name = "akssora-editor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Text and code editor buffer engine for Akssora"
+
+[dependencies]
+akssora-terminal-config.workspace = true

@@ -1,0 +1,28 @@
+# Akssora Terminal Emulator Configuration
+# https://github.com/Akash-Kumar-Sinha/akssora
+
+[window]
+title = "Akssora"
+width = 1200
+height = 800
+decorations = false
+margin = 2.0
+min_block_height = 100.0
+
+[font]
+family = "Roboto Mono"
+size = 14.0
+line_height_ratio = 1.2
+
+[theme]
+name = "Akssora Modern Dark"
+background = "#000000"
+foreground = "#ececec"
+cursor = "#096ab9"
+cursor_text = "#1e2124"
+selection = "#2e333b"
+header_bg = "#010101"
+header_title = "#ececec"
+header_icon = "#ececec"
+header_button_hover = "#050505"
+header_close_hover = "#b80b13"

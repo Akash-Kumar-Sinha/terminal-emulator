@@ -1,0 +1,16 @@
+[package]
+name = "akssora-terminal-renderer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "GPU-accelerated glyph and UI renderer powered by WGPU for Akssora"
+
+[dependencies]
+akssora-terminal-config.workspace = true
+akssora-terminal-screen.workspace = true
+akssora-terminal-ui.workspace = true
+bytemuck.workspace = true
+font-kit.workspace = true
+pathfinder_geometry.workspace = true
+wgpu.workspace = true

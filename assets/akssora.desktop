@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Akssora
+Comment=A GPU-accelerated terminal emulator written in Rust
+Exec=akssora
+Icon=akssora
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=terminal;emulator;gpu;rust;akssora;

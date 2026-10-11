@@ -1,0 +1,124 @@
+use akssora_terminal_config::Theme;
+use akssora_terminal_renderer::{FontManager, GlyphRenderer};
+use akssora_terminal_ui::{Block, Header};
+
+// INFO: Encapsulates WGPU device, command queue, swapchain surface, and pass submission.
+pub struct WgpuState {
+    surface: wgpu::Surface<'static>,
+    #[allow(dead_code)]
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    config: wgpu::SurfaceConfiguration,
+    glyphs: GlyphRenderer,
+}
+
+impl WgpuState {
+    pub fn new(
+        surface: wgpu::Surface<'static>,
+        adapter: wgpu::Adapter,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        config: wgpu::SurfaceConfiguration,
+        glyphs: GlyphRenderer,
+    ) -> Self {
+        Self {
+            surface,
+            adapter,
+            device,
+            queue,
+            config,
+            glyphs,
+        }
+    }
+
+    pub fn size(&self) -> (u32, u32) {
+        (self.config.width, self.config.height)
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        self.config.width = width;
+        self.config.height = height;
+        self.surface.configure(&self.device, &self.config);
+    }
+
+    pub fn render(
+        &mut self,
+        fonts: &FontManager,
+        theme: &Theme,
+        header: &Header,
+        blocks: &[&Block],
+    ) {
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                self.surface.configure(&self.device, &self.config);
+                frame
+            }
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                self.surface.configure(&self.device, &self.config);
+                return;
+            }
+            wgpu::CurrentSurfaceTexture::Timeout
+            | wgpu::CurrentSurfaceTexture::Occluded
+            | wgpu::CurrentSurfaceTexture::Validation => {
+                return;
+            }
+            wgpu::CurrentSurfaceTexture::Lost => {
+                panic!("surface lost");
+            }
+        };
+
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        self.glyphs.prepare(
+            &self.device,
+            &self.queue,
+            header,
+            blocks,
+            fonts,
+            theme,
+            self.config.width as f32,
+            self.config.height as f32,
+        );
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+
+        let (cr, cg, cb, ca) = theme.clear_color_linear();
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("akssora main render pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: cr,
+                            g: cg,
+                            b: cb,
+                            a: ca,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+
+            self.glyphs.draw(&mut pass);
+        }
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+        frame.present();
+    }
+}

@@ -1,0 +1,11 @@
+[package]
+name = "akssora-terminal-pty"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Cross-platform pseudo-terminal session manager for Akssora"
+
+[dependencies]
+anyhow.workspace = true
+portable-pty.workspace = true
