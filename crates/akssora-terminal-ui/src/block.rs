@@ -17,7 +17,10 @@ pub struct Block {
     pub border_color: [f32; 4],
     pub text_color: [f32; 4],
     pub text: Option<String>,
+    pub bottom_up: bool,
+    pub pane_id: Option<u64>,
     pub shell: Terminal,
+    pub scrollbar: crate::scrollbar::Scrollbar,
 }
 
 impl Block {
@@ -45,12 +48,15 @@ impl Block {
             y: y.unwrap_or(0.0),
             bg_color: bg_color.unwrap_or(theme.background),
             border_top: border_top.unwrap_or(false),
-            border_bottom: border_bottom.unwrap_or(true),
-            border_thickness: border_thickness.unwrap_or(1.0),
+            border_bottom: border_bottom.unwrap_or(false),
+            border_thickness: border_thickness.unwrap_or(0.0),
             border_color: border_color.unwrap_or(theme.border),
             text_color: text_color.unwrap_or(theme.foreground),
             text: text.or_else(|| Some(String::from("Default Text"))),
+            bottom_up: true,
+            pane_id: None,
             shell,
+            scrollbar: crate::scrollbar::Scrollbar::new(),
         }
     }
 

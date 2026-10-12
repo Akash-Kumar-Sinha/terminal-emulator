@@ -85,6 +85,7 @@ dependencies = [
  "akssora-terminal-screen",
  "akssora-terminal-ui",
  "pollster",
+ "rand",
  "wgpu",
  "winit",
 ]

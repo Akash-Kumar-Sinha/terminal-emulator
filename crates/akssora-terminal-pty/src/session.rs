@@ -26,8 +26,15 @@ fn default_shell() -> String {
 
 impl PtySession {
     pub fn spawn(rows: u16, cols: u16) -> anyhow::Result<Self> {
+        Self::spawn_in(rows, cols, None)
+    }
+
+    pub fn spawn_in(rows: u16, cols: u16, cwd: Option<&std::path::Path>) -> anyhow::Result<Self> {
         let mut cmd = CommandBuilder::new(default_shell());
         cmd.env("TERM", "xterm-256color");
+        if let Some(dir) = cwd {
+            cmd.cwd(dir);
+        }
         Self::spawn_with(cmd, rows, cols)
     }
 
@@ -56,7 +63,8 @@ impl PtySession {
         let writer = pair.master.take_writer()?;
         let mut reader = pair.master.try_clone_reader()?;
 
-        let (tx, output_rx) = mpsc::channel();
+        // INFO: Bounded sync channel (1024 chunks of 4KB = 4MB buffer) provides backpressure under massive output streams like `yes`
+        let (tx, output_rx) = mpsc::sync_channel(1024);
         thread::Builder::new()
             .name("akssora-pty-reader".to_string())
             .spawn(move || {
@@ -107,5 +115,9 @@ impl PtySession {
 
     pub fn kill(&mut self) {
         let _ = self.child.kill();
+    }
+
+    pub fn process_id(&self) -> Option<u32> {
+        self.child.process_id()
     }
 }

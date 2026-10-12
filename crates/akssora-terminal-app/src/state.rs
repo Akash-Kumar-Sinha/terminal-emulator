@@ -45,12 +45,34 @@ impl WgpuState {
         self.surface.configure(&self.device, &self.config);
     }
 
+    pub fn clear_glyph_cache(&mut self) {
+        self.glyphs.clear_cache();
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         fonts: &FontManager,
+        ui_fonts: &FontManager,
         theme: &Theme,
+        config: &akssora_terminal_config::Config,
+        active_settings_tab: akssora_terminal_ui::SettingsTab,
+        settings_search_query: &str,
+        conflicts: &[akssora_terminal_config::ConflictWarning],
         header: &Header,
         blocks: &[&Block],
+        sidebar: &akssora_terminal_ui::Sidebar,
+        tab_manager: &akssora_terminal_ui::TabManager,
+        tab_layout: akssora_terminal_config::TabLayoutPreference,
+        split_trees: &std::collections::HashMap<u64, akssora_terminal_ui::PaneTree>,
+        active_pane_id: Option<u64>,
+        active_tooltip: Option<&akssora_terminal_ui::Tooltip>,
+        hovered_setting_action: Option<akssora_terminal_ui::SettingsAction>,
+        layout_dropdown_open: bool,
+        confirm_exit: bool,
+        drop_indicator: Option<(f32, f32, f32, f32)>,
+        sessions: Option<&[akssora_terminal_ui::SessionRowData]>,
+        context_menu: Option<&akssora_terminal_ui::ContextMenu>,
     ) {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
@@ -82,9 +104,26 @@ impl WgpuState {
             header,
             blocks,
             fonts,
+            ui_fonts,
             theme,
+            config,
+            active_settings_tab,
+            settings_search_query,
+            conflicts,
             self.config.width as f32,
             self.config.height as f32,
+            sidebar,
+            tab_manager,
+            tab_layout,
+            split_trees,
+            active_pane_id,
+            active_tooltip,
+            hovered_setting_action,
+            layout_dropdown_open,
+            confirm_exit,
+            drop_indicator,
+            sessions,
+            context_menu,
         );
 
         let mut encoder = self

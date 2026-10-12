@@ -25,5 +25,6 @@ akssora-terminal-renderer.workspace = true
 akssora-terminal-screen.workspace = true
 akssora-terminal-ui.workspace = true
 pollster.workspace = true
+rand.workspace = true
 wgpu.workspace = true
 winit.workspace = true

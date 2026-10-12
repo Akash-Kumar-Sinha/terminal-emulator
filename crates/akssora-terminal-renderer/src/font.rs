@@ -10,6 +10,7 @@ use pathfinder_geometry::transform2d::Transform2F;
 use pathfinder_geometry::vector::Vector2F;
 
 pub const FONT_SIZE: f32 = 14.0;
+pub const UI_FONT_SIZE: f32 = 14.0;
 pub const LINE_HEIGHT_RATIO: f32 = 1.2;
 
 pub struct RasterGlyph {
@@ -20,6 +21,7 @@ pub struct RasterGlyph {
     pub bearing_top: f32,
 }
 
+#[derive(Clone)]
 struct Faces {
     regular: Font,
     bold: Font,
@@ -39,6 +41,7 @@ impl Faces {
 }
 
 // INFO: Font rasterization and metrics calculation engine supporting system fallback lookup.
+#[derive(Clone)]
 pub struct FontManager {
     faces: Faces,
     fallbacks: Vec<Font>,

@@ -8,6 +8,7 @@ height = 800
 decorations = false
 margin = 2.0
 min_block_height = 100.0
+bottom_up = true
 
 [font]
 family = "Roboto Mono"
@@ -25,4 +26,3 @@ header_bg = "#010101"
 header_title = "#ececec"
 header_icon = "#ececec"
 header_button_hover = "#050505"
-header_close_hover = "#b80b13"

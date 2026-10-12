@@ -3,18 +3,23 @@ use akssora_terminal_config::Color;
 use crate::cell::Cell;
 use crate::cursor::Cursor;
 use crate::pen::Pen;
+use crate::reflow::reflow_terminal_content;
+use crate::selection::SelectionRange;
 
-// INFO: Terminal 2D character matrix managing active display lines, scrollback history, and ANSI grid operations.
+// INFO: Terminal 2D character matrix managing active display lines, scrollback history, selection, and ANSI grid operations.
 #[derive(Clone, Debug)]
 pub struct TerminalGrid {
     rows: usize,
     cols: usize,
     lines: Vec<Vec<Cell>>,
+    line_wrapped: Vec<bool>,
     cursor: Cursor,
     pen: Pen,
     wrap_pending: bool,
     scrollback: Vec<Vec<Cell>>,
+    scrollback_wrapped: Vec<bool>,
     scroll_offset: usize,
+    selection: Option<SelectionRange>,
 }
 
 impl TerminalGrid {
@@ -25,16 +30,27 @@ impl TerminalGrid {
             rows,
             cols,
             lines: vec![vec![Cell::default(); cols]; rows],
+            line_wrapped: vec![false; rows],
             cursor: Cursor::new(0, 0),
             pen: Pen::default(),
             wrap_pending: false,
             scrollback: Vec::new(),
+            scrollback_wrapped: Vec::new(),
             scroll_offset: 0,
+            selection: None,
         }
     }
 
     pub fn lines(&self) -> &[Vec<Cell>] {
         &self.lines
+    }
+
+    pub fn line_wrapped(&self) -> &[bool] {
+        &self.line_wrapped
+    }
+
+    pub fn is_line_wrapped(&self, row: usize) -> bool {
+        self.line_wrapped.get(row).copied().unwrap_or(false)
     }
 
     pub fn cursor(&self) -> (usize, usize) {
@@ -89,10 +105,48 @@ impl TerminalGrid {
         self.scroll_offset = 0;
     }
 
+    pub fn scrollback(&self) -> &[Vec<Cell>] {
+        &self.scrollback
+    }
+
+    pub fn scrollback_wrapped(&self) -> &[bool] {
+        &self.scrollback_wrapped
+    }
+
+    pub fn set_scroll_offset(&mut self, offset: usize) {
+        self.scroll_offset = offset.min(self.scrollback.len());
+    }
+
+    pub fn selection(&self) -> Option<SelectionRange> {
+        self.selection
+    }
+
+    pub fn set_selection(&mut self, sel: Option<SelectionRange>) {
+        self.selection = sel;
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selection = None;
+    }
+
     pub fn scroll_up(&mut self) {
         let line = self.lines.remove(0);
+        let wrapped = if !self.line_wrapped.is_empty() {
+            self.line_wrapped.remove(0)
+        } else {
+            false
+        };
         self.scrollback.push(line);
+        self.scrollback_wrapped.push(wrapped);
+        if self.scrollback.len() > 10_000 {
+            self.scrollback.remove(0);
+            self.scrollback_wrapped.remove(0);
+        }
         self.lines.push(vec![Cell::default(); self.cols]);
+        self.line_wrapped.push(false);
+        if self.scroll_offset > 0 {
+            self.scroll_offset = (self.scroll_offset + 1).min(self.scrollback.len());
+        }
     }
 
     pub fn visible_lines(&self) -> Vec<&Vec<Cell>> {
@@ -110,6 +164,22 @@ impl TerminalGrid {
             .collect()
     }
 
+    pub fn visible_line_wrapped(&self) -> Vec<bool> {
+        let total = self.scrollback.len() + self.lines.len();
+        let end = total.saturating_sub(self.scroll_offset);
+        let start = end.saturating_sub(self.rows);
+        (start..end)
+            .map(|i| {
+                if i < self.scrollback.len() {
+                    self.scrollback_wrapped.get(i).copied().unwrap_or(false)
+                } else {
+                    let idx = i - self.scrollback.len();
+                    self.line_wrapped.get(idx).copied().unwrap_or(false)
+                }
+            })
+            .collect()
+    }
+
     pub fn content_rows(&self) -> usize {
         let mut last = 0;
         for (i, line) in self.lines.iter().enumerate() {
@@ -120,33 +190,36 @@ impl TerminalGrid {
         last.max(1)
     }
 
+    // INFO: Dynamically reflows existing cell lines and scrollback, wrapping or unwrapping text to fit new dimensions while tracking cursor position.
     pub fn resize(&mut self, rows: usize, cols: usize) {
-        let rows = rows.max(1);
-        let cols = cols.max(1);
-        if rows == self.rows && cols == self.cols {
+        let new_rows = rows.max(1);
+        let new_cols = cols.max(1);
+        if new_rows == self.rows && new_cols == self.cols {
             return;
         }
 
-        for line in &mut self.lines {
-            line.resize(cols, Cell::default());
-        }
+        let reflow_res = reflow_terminal_content(
+            &self.scrollback,
+            &self.scrollback_wrapped,
+            &self.lines,
+            &self.line_wrapped,
+            self.cursor.row,
+            self.cursor.col,
+            new_rows,
+            new_cols,
+        );
 
-        if rows > self.lines.len() {
-            let extra = rows - self.lines.len();
-            for _ in 0..extra {
-                self.lines.push(vec![Cell::default(); cols]);
-            }
-        } else {
-            let drop = self.lines.len() - rows;
-            self.lines.drain(0..drop);
-            self.cursor.row = self.cursor.row.saturating_sub(drop);
-        }
-
-        self.rows = rows;
-        self.cols = cols;
-        self.cursor.row = self.cursor.row.min(rows - 1);
-        self.cursor.col = self.cursor.col.min(cols - 1);
+        self.scrollback = reflow_res.scrollback;
+        self.scrollback_wrapped = reflow_res.scrollback_wrapped;
+        self.lines = reflow_res.lines;
+        self.line_wrapped = reflow_res.line_wrapped;
+        self.rows = new_rows;
+        self.cols = new_cols;
+        self.cursor.row = reflow_res.cursor_row;
+        self.cursor.col = reflow_res.cursor_col;
         self.wrap_pending = false;
+        self.scroll_offset = self.scroll_offset.min(self.scrollback.len());
+        self.selection = None;
     }
 
     pub fn newline(&mut self) {
@@ -158,8 +231,11 @@ impl TerminalGrid {
     }
 
     pub fn put_char(&mut self, ch: char) {
-        self.scroll_offset = 0;
         if self.wrap_pending {
+            let row = self.cursor.row.min(self.rows - 1);
+            if row < self.line_wrapped.len() {
+                self.line_wrapped[row] = true;
+            }
             self.cursor.col = 0;
             self.newline();
             self.wrap_pending = false;
@@ -194,6 +270,9 @@ impl TerminalGrid {
         let end = to.min(self.cols);
         for col in from..end {
             self.lines[row][col] = Cell::default();
+        }
+        if to >= self.cols && row < self.line_wrapped.len() {
+            self.line_wrapped[row] = false;
         }
     }
 
@@ -291,5 +370,35 @@ impl TerminalGrid {
             }
             i += 1;
         }
+    }
+
+    // INFO: Returns currently selected text if an active selection exists.
+    pub fn selected_text(&self) -> Option<String> {
+        let sel = self.selection?;
+        if sel.is_empty() {
+            return None;
+        }
+        let vis = self.visible_lines();
+        let owned_lines: Vec<Vec<Cell>> = vis.into_iter().cloned().collect();
+        let wrapped = self.visible_line_wrapped();
+        let text = sel.extract_text(&owned_lines, &wrapped);
+        if text.is_empty() { None } else { Some(text) }
+    }
+
+    // INFO: Returns all text on the visible grid.
+    pub fn all_text(&self) -> String {
+        let mut result = String::new();
+        let vis = self.visible_lines();
+        let wrapped = self.visible_line_wrapped();
+        for (i, row) in vis.iter().enumerate() {
+            let s: String = row.iter().map(|c| c.ch).collect();
+            let trimmed = s.trim_end_matches([' ', '\0']);
+            result.push_str(trimmed);
+            let is_wrapped = wrapped.get(i).copied().unwrap_or(false);
+            if !is_wrapped && i + 1 < vis.len() {
+                result.push('\n');
+            }
+        }
+        result
     }
 }
