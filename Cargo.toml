@@ -26,8 +26,11 @@ rand = "0.10.2"
 vte = "0.15"
 wgpu = "29.0.3"
 winit = "0.30.13"
+ropey = "1.6.1"
+rayon = "1.10"
 
 # Internal workspace crates - Terminal core subsystem
+akssora-icons = { path = "crates/akssora-icons" }
 akssora-terminal-config = { path = "crates/akssora-terminal-config" }
 akssora-terminal-pty = { path = "crates/akssora-terminal-pty" }
 akssora-terminal-screen = { path = "crates/akssora-terminal-screen" }

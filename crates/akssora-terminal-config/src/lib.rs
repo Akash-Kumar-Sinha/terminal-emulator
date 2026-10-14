@@ -7,9 +7,9 @@ pub mod theme;
 pub mod window;
 
 pub use color::{Color, rgb, srgb_to_linear};
-pub use config::Config;
+pub use config::{Config, LineNumberMode};
 pub use font::FontConfig;
 pub use keybinding::{Action, ConflictWarning, KeybindingScope, Keybindings};
 pub use layout::TabLayoutPreference;
-pub use theme::Theme;
+pub use theme::{ButtonName, ButtonState, PanelName, Theme};
 pub use window::WindowConfig;

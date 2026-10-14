@@ -20,6 +20,7 @@ pub struct TerminalGrid {
     scrollback_wrapped: Vec<bool>,
     scroll_offset: usize,
     selection: Option<SelectionRange>,
+    saved_cursor: Option<(usize, usize)>,
 }
 
 impl TerminalGrid {
@@ -38,6 +39,7 @@ impl TerminalGrid {
             scrollback_wrapped: Vec::new(),
             scroll_offset: 0,
             selection: None,
+            saved_cursor: None,
         }
     }
 
@@ -313,6 +315,105 @@ impl TerminalGrid {
         self.cursor.row = row.min(self.rows - 1);
         self.cursor.col = col.min(self.cols - 1);
         self.wrap_pending = false;
+    }
+
+    // INFO: Deletes N characters at cursor position, shifting remaining characters on the row to the left (DCH: CSI P).
+    pub fn delete_chars(&mut self, n: usize) {
+        let row = self.cursor.row;
+        let col = self.cursor.col;
+        if row >= self.rows || col >= self.cols {
+            return;
+        }
+        let count = n.max(1).min(self.cols.saturating_sub(col));
+        if count == 0 {
+            return;
+        }
+        for c in col..(self.cols - count) {
+            self.lines[row][c] = self.lines[row][c + count];
+        }
+        for c in (self.cols - count)..self.cols {
+            self.lines[row][c] = Cell::default();
+        }
+        self.wrap_pending = false;
+    }
+
+    // INFO: Inserts N blank characters at cursor position, shifting existing characters to the right (ICH: CSI @).
+    pub fn insert_chars(&mut self, n: usize) {
+        let row = self.cursor.row;
+        let col = self.cursor.col;
+        if row >= self.rows || col >= self.cols {
+            return;
+        }
+        let count = n.max(1).min(self.cols.saturating_sub(col));
+        if count == 0 {
+            return;
+        }
+        for c in ((col + count)..self.cols).rev() {
+            self.lines[row][c] = self.lines[row][c - count];
+        }
+        for c in col..(col + count) {
+            self.lines[row][c] = Cell::default();
+        }
+        self.wrap_pending = false;
+    }
+
+    // INFO: Erases N characters from cursor position without moving cursor (ECH: CSI X).
+    pub fn erase_chars(&mut self, n: usize) {
+        let row = self.cursor.row;
+        let col = self.cursor.col;
+        if row >= self.rows || col >= self.cols {
+            return;
+        }
+        let count = n.max(1);
+        let end = (col + count).min(self.cols);
+        for c in col..end {
+            self.lines[row][c] = Cell::default();
+        }
+        self.wrap_pending = false;
+    }
+
+    // INFO: Inserts N blank lines at cursor line, scrolling lower lines down (IL: CSI L).
+    pub fn insert_lines(&mut self, n: usize) {
+        let row = self.cursor.row;
+        if row >= self.rows {
+            return;
+        }
+        let count = n.max(1).min(self.rows.saturating_sub(row));
+        for _ in 0..count {
+            self.lines.pop();
+            self.line_wrapped.pop();
+            self.lines.insert(row, vec![Cell::default(); self.cols]);
+            self.line_wrapped.insert(row, false);
+        }
+        self.wrap_pending = false;
+    }
+
+    // INFO: Deletes N lines at cursor line, scrolling lower lines up (DL: CSI M).
+    pub fn delete_lines(&mut self, n: usize) {
+        let row = self.cursor.row;
+        if row >= self.rows {
+            return;
+        }
+        let count = n.max(1).min(self.rows.saturating_sub(row));
+        for _ in 0..count {
+            self.lines.remove(row);
+            self.line_wrapped.remove(row);
+            self.lines.push(vec![Cell::default(); self.cols]);
+            self.line_wrapped.push(false);
+        }
+        self.wrap_pending = false;
+    }
+
+    // INFO: Saves active cursor position for later restoration.
+    pub fn save_cursor(&mut self) {
+        self.saved_cursor = Some((self.cursor.row, self.cursor.col));
+    }
+
+    // INFO: Restores previously saved cursor position.
+    pub fn restore_cursor(&mut self) {
+        if let Some((r, c)) = self.saved_cursor {
+            self.move_cursor(r, c);
+        }
     }
 
     pub fn apply_sgr(&mut self, codes: &[u16]) {

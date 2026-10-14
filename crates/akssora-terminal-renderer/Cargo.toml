@@ -7,9 +7,13 @@ authors.workspace = true
 description = "GPU-accelerated glyph and UI renderer powered by WGPU for Akssora"
 
 [dependencies]
+akssora-icons.workspace = true
 akssora-terminal-config.workspace = true
 akssora-terminal-screen.workspace = true
 akssora-terminal-ui.workspace = true
+akssora-editor.workspace = true
+akssora-file-explorer.workspace = true
+akssora-git.workspace = true
 bytemuck.workspace = true
 font-kit.workspace = true
 pathfinder_geometry.workspace = true

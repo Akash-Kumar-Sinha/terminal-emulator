@@ -6,6 +6,39 @@ use crate::layout::TabLayoutPreference;
 use crate::theme::Theme;
 use crate::window::WindowConfig;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineNumberMode {
+    Off,
+    Absolute,
+    Relative,
+}
+
+impl LineNumberMode {
+    pub const ALL: &'static [LineNumberMode] = &[
+        LineNumberMode::Off,
+        LineNumberMode::Absolute,
+        LineNumberMode::Relative,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Absolute => "Absolute",
+            Self::Relative => "Relative",
+        }
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "off" | "false" | "hidden" => Some(Self::Off),
+            "absolute" | "on" | "true" | "shown" => Some(Self::Absolute),
+            "relative" => Some(Self::Relative),
+            _ => None,
+        }
+    }
+}
+
 // INFO: Root configuration model aggregating theme, font, window, tab layout, and keybindings.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
@@ -20,7 +53,22 @@ pub struct Config {
     pub cursor_style: String, // "Block", "Beam", "Underline"
     pub cursor_blink: bool,
     pub tab_size: usize,
+    pub line_height: f32,
     pub line_numbers: bool,
+    pub line_number_mode: LineNumberMode,
+    pub line_wrap: bool,
+    pub format_on_save: bool,
+    pub auto_save: bool,
+    pub markdown_formatter: String,
+    // Editor & Vim Enhancements
+    pub vim_mode: bool,
+    pub vim_unnamed_system_clipboard: bool,
+    pub vim_status_bar: bool,
+    pub autocomplete_symbols: bool,
+    // Code Review Enhancements
+    pub code_review_diff_mode: String, // "Unified", "Split"
+    pub code_review_file_sidebar_width: f32,
+    pub code_review_show_find_bar: bool,
 }
 
 impl Default for Config {
@@ -37,7 +85,20 @@ impl Default for Config {
             cursor_style: "Block".to_string(),
             cursor_blink: true,
             tab_size: 4,
+            line_height: 1.2,
             line_numbers: true,
+            line_number_mode: LineNumberMode::Absolute,
+            line_wrap: true,
+            format_on_save: false,
+            auto_save: false,
+            markdown_formatter: "builtin".to_string(),
+            vim_mode: true,
+            vim_unnamed_system_clipboard: false,
+            vim_status_bar: true,
+            autocomplete_symbols: true,
+            code_review_diff_mode: "Unified".to_string(),
+            code_review_file_sidebar_width: 240.0,
+            code_review_show_find_bar: false,
         }
     }
 }
@@ -180,6 +241,16 @@ impl Config {
                 if let Ok(ts) = cleaned.parse::<usize>() {
                     self.tab_size = ts.clamp(2, 8);
                 }
+            } else if (line.starts_with("\"line_height\":")
+                || line.starts_with("\"line_height\" :"))
+                && let Some(val) = line.split(':').nth(1)
+            {
+                let cleaned = val
+                    .trim()
+                    .trim_matches(|c| c == ',' || c == '"' || c == ' ');
+                if let Ok(lh) = cleaned.parse::<f32>() {
+                    self.line_height = lh.clamp(1.0, 3.0);
+                }
             } else if (line.starts_with("\"line_numbers\":")
                 || line.starts_with("\"line_numbers\" :"))
                 && let Some(val) = line.split(':').nth(1)
@@ -187,14 +258,122 @@ impl Config {
                 let cleaned = val
                     .trim()
                     .trim_matches(|c| c == ',' || c == '"' || c == ' ');
-                self.line_numbers = cleaned == "true";
+                if let Some(mode) = LineNumberMode::from_str(cleaned) {
+                    self.line_number_mode = mode;
+                    self.line_numbers = mode != LineNumberMode::Off;
+                } else {
+                    self.line_numbers = cleaned == "true";
+                    self.line_number_mode = if self.line_numbers {
+                        LineNumberMode::Absolute
+                    } else {
+                        LineNumberMode::Off
+                    };
+                }
+            } else if (line.starts_with("\"line_number_mode\":")
+                || line.starts_with("\"line_number_mode\" :"))
+                && let Some(val) = line.split(':').nth(1)
+            {
+                let cleaned = val
+                    .trim()
+                    .trim_matches(|c| c == ',' || c == '"' || c == ' ');
+                if let Some(mode) = LineNumberMode::from_str(cleaned) {
+                    self.line_number_mode = mode;
+                    self.line_numbers = mode != LineNumberMode::Off;
+                }
+            } else if (line.starts_with("\"line_wrap\":") || line.starts_with("\"line_wrap\" :"))
+                && let Some(val) = line.split(':').nth(1)
+            {
+                let cleaned = val
+                    .trim()
+                    .trim_matches(|c| c == ',' || c == '"' || c == ' ');
+                self.line_wrap = cleaned == "true";
+            } else if (line.starts_with("\"format_on_save\":")
+                || line.starts_with("\"format_on_save\" :"))
+                && let Some(val) = line.split(':').nth(1)
+            {
+                let cleaned = val
+                    .trim()
+                    .trim_matches(|c| c == ',' || c == '"' || c == ' ');
+                self.format_on_save = cleaned == "true";
+            } else if (line.starts_with("\"auto_save\":") || line.starts_with("\"auto_save\" :"))
+                && let Some(val) = line.split(':').nth(1)
+            {
+                let cleaned = val
+                    .trim()
+                    .trim_matches(|c| c == ',' || c == '"' || c == ' ');
+                self.auto_save = cleaned == "true";
+            } else if (line.starts_with("\"markdown_formatter\":")
+                || line.starts_with("\"markdown_formatter\" :"))
+                && let Some(val) = line.split(':').nth(1)
+            {
+                let cleaned = val
+                    .trim()
+                    .trim_matches(|c| c == ',' || c == '"' || c == ' ');
+                self.markdown_formatter = cleaned.to_string();
+            } else if (line.starts_with("\"vim_mode\":") || line.starts_with("\"vim_mode\" :"))
+                && let Some(val) = line.split(':').nth(1)
+            {
+                let cleaned = val
+                    .trim()
+                    .trim_matches(|c| c == ',' || c == '"' || c == ' ');
+                self.vim_mode = cleaned == "true";
+            } else if (line.starts_with("\"vim_unnamed_system_clipboard\":")
+                || line.starts_with("\"vim_unnamed_system_clipboard\" :"))
+                && let Some(val) = line.split(':').nth(1)
+            {
+                let cleaned = val
+                    .trim()
+                    .trim_matches(|c| c == ',' || c == '"' || c == ' ');
+                self.vim_unnamed_system_clipboard = cleaned == "true";
+            } else if (line.starts_with("\"vim_status_bar\":")
+                || line.starts_with("\"vim_status_bar\" :"))
+                && let Some(val) = line.split(':').nth(1)
+            {
+                let cleaned = val
+                    .trim()
+                    .trim_matches(|c| c == ',' || c == '"' || c == ' ');
+                self.vim_status_bar = cleaned == "true";
+            } else if (line.starts_with("\"autocomplete_symbols\":")
+                || line.starts_with("\"autocomplete_symbols\" :"))
+                && let Some(val) = line.split(':').nth(1)
+            {
+                let cleaned = val
+                    .trim()
+                    .trim_matches(|c| c == ',' || c == '"' || c == ' ');
+                self.autocomplete_symbols = cleaned == "true";
+            } else if (line.starts_with("\"code_review_diff_mode\":")
+                || line.starts_with("\"code_review_diff_mode\" :"))
+                && let Some(val) = line.split(':').nth(1)
+            {
+                let cleaned = val
+                    .trim()
+                    .trim_matches(|c| c == ',' || c == '"' || c == ' ');
+                self.code_review_diff_mode = cleaned.to_string();
+            } else if (line.starts_with("\"code_review_file_sidebar_width\":")
+                || line.starts_with("\"code_review_file_sidebar_width\" :"))
+                && let Some(val) = line.split(':').nth(1)
+            {
+                let cleaned = val
+                    .trim()
+                    .trim_matches(|c| c == ',' || c == '"' || c == ' ');
+                if let Ok(w) = cleaned.parse::<f32>() {
+                    self.code_review_file_sidebar_width = w.clamp(140.0, 600.0);
+                }
+            } else if (line.starts_with("\"code_review_show_find_bar\":")
+                || line.starts_with("\"code_review_show_find_bar\" :"))
+                && let Some(val) = line.split(':').nth(1)
+            {
+                let cleaned = val
+                    .trim()
+                    .trim_matches(|c| c == ',' || c == '"' || c == ' ');
+                self.code_review_show_find_bar = cleaned == "true";
             }
         }
     }
 
     pub fn to_json(&self) -> String {
         format!(
-            "{{\n  \"tab_layout\": \"{}\",\n  \"font_size\": {},\n  \"ui_font_size\": {},\n  \"window_width\": {},\n  \"window_height\": {},\n  \"sidebar_width\": {},\n  \"theme\": \"{}\",\n  \"cursor_style\": \"{}\",\n  \"cursor_blink\": {},\n  \"tab_size\": {},\n  \"line_numbers\": {}\n}}\n",
+            "{{\n  \"tab_layout\": \"{}\",\n  \"font_size\": {},\n  \"ui_font_size\": {},\n  \"window_width\": {},\n  \"window_height\": {},\n  \"sidebar_width\": {},\n  \"theme\": \"{}\",\n  \"cursor_style\": \"{}\",\n  \"cursor_blink\": {},\n  \"tab_size\": {},\n  \"line_height\": {:.2},\n  \"line_numbers\": {},\n  \"line_number_mode\": \"{}\",\n  \"line_wrap\": {},\n  \"format_on_save\": {},\n  \"auto_save\": {},\n  \"markdown_formatter\": \"{}\",\n  \"vim_mode\": {},\n  \"vim_unnamed_system_clipboard\": {},\n  \"vim_status_bar\": {},\n  \"autocomplete_symbols\": {},\n  \"code_review_diff_mode\": \"{}\",\n  \"code_review_file_sidebar_width\": {},\n  \"code_review_show_find_bar\": {}\n}}\n",
             self.tab_layout.label(),
             self.font.size,
             self.ui_font_size,
@@ -205,7 +384,24 @@ impl Config {
             self.cursor_style,
             self.cursor_blink,
             self.tab_size,
-            self.line_numbers
+            self.line_height,
+            self.line_numbers,
+            if self.line_numbers {
+                self.line_number_mode.label()
+            } else {
+                LineNumberMode::Off.label()
+            },
+            self.line_wrap,
+            self.format_on_save,
+            self.auto_save,
+            self.markdown_formatter,
+            self.vim_mode,
+            self.vim_unnamed_system_clipboard,
+            self.vim_status_bar,
+            self.autocomplete_symbols,
+            self.code_review_diff_mode,
+            self.code_review_file_sidebar_width,
+            self.code_review_show_find_bar
         )
     }
 }

@@ -16,6 +16,10 @@ name = "akssora-terminal"
 path = "src/bin/akssora-terminal.rs"
 
 [dependencies]
+akssora-icons.workspace = true
+akssora-editor.workspace = true
+akssora-file-explorer.workspace = true
+akssora-git.workspace = true
 akssora-terminal-config.workspace = true
 akssora-terminal-core.workspace = true
 akssora-terminal-input.workspace = true

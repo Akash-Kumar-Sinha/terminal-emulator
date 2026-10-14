@@ -46,6 +46,10 @@ impl TabLayoutPreference {
         }
     }
 
+    pub fn description(&self) -> &'static str {
+        self.label()
+    }
+
     pub fn parse(s: &str) -> Self {
         match s.trim().to_ascii_lowercase().as_str() {
             "sidebar" | "sidebaronly" => Self::Sidebar,

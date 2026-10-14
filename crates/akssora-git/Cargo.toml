@@ -7,4 +7,6 @@ authors.workspace = true
 description = "Git integration and status tracking for Akssora"
 
 [dependencies]
+akssora-icons.workspace = true
 anyhow.workspace = true
+rayon.workspace = true

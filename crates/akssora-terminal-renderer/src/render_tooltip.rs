@@ -21,8 +21,12 @@ pub fn render_tooltip(
     screen_w: f32,
     screen_h: f32,
 ) {
-    let cell_w = fonts.cell_w;
-    let cell_h = fonts.cell_h;
+    // INFO: Tooltips use a compact, smaller font size scaled proportionally with UI font size.
+    let tooltip_size = (fonts.size() * (11.0 / 14.0)).max(9.0);
+    let mut tooltip_fonts = fonts.clone();
+    tooltip_fonts.set_size(tooltip_size);
+    let cell_w = tooltip_fonts.cell_w;
+    let cell_h = tooltip_fonts.cell_h;
 
     let (tx, ty, tw, th) = if tooltip.target_rect.2 > 0.0 && tooltip.target_rect.3 > 0.0 {
         tooltip.bounds(cell_w, cell_h, screen_w, screen_h)
@@ -59,7 +63,7 @@ pub fn render_tooltip(
         return;
     }
 
-    // Borderless tooltip with subtle dark background and rounded corners
+    // INFO: Tooltip design: 4px rounded container with 1px subtle border
     crate::quad::push_rounded_rect(
         verts,
         tx,
@@ -69,25 +73,75 @@ pub fn render_tooltip(
         4.0,
         [[solid_uv[0], solid_uv[1]]; 2],
         solid_uv,
+        theme.tooltip_border,
+        screen_w,
+        screen_h,
+    );
+    crate::quad::push_rounded_rect(
+        verts,
+        tx + 1.0,
+        ty + 1.0,
+        tx + tw - 1.0,
+        ty + th - 1.0,
+        3.0,
+        [[solid_uv[0], solid_uv[1]]; 2],
+        solid_uv,
         theme.tooltip_background,
         screen_w,
         screen_h,
     );
 
-    let label = tooltip.display_label();
     let text_x = tx + 8.0;
     let text_y = ty + (th - cell_h) / 2.0;
-    renderer.render_text(
-        queue,
-        fonts,
-        verts,
-        &label,
-        text_x,
-        text_y,
-        tw,
-        theme.tooltip_foreground,
-        false,
-        screen_w,
-        screen_h,
-    );
+
+    if let Some(sc) = &tooltip.shortcut
+        && !sc.trim().is_empty()
+    {
+        // Dual-tone tooltip: main action label in primary color, shortcut in muted secondary color
+        let label = format!("{} ", tooltip.text);
+        let label_w = label.len() as f32 * cell_w;
+        renderer.render_text(
+            queue,
+            &tooltip_fonts,
+            verts,
+            &label,
+            text_x,
+            text_y,
+            label_w,
+            theme.tooltip_foreground,
+            false,
+            screen_w,
+            screen_h,
+        );
+
+        let sc_text = format!("({})", sc);
+        let sc_w = sc_text.len() as f32 * cell_w;
+        renderer.render_text(
+            queue,
+            &tooltip_fonts,
+            verts,
+            &sc_text,
+            text_x + label_w,
+            text_y,
+            sc_w,
+            theme.tooltip_shortcut_foreground,
+            false,
+            screen_w,
+            screen_h,
+        );
+    } else {
+        renderer.render_text(
+            queue,
+            &tooltip_fonts,
+            verts,
+            &tooltip.text,
+            text_x,
+            text_y,
+            tw - 16.0,
+            theme.tooltip_foreground,
+            false,
+            screen_w,
+            screen_h,
+        );
+    }
 }

@@ -40,8 +40,30 @@ impl App {
         }
     }
 
+    pub fn sync_active_tab_state(&mut self) {
+        if let Some(tab) = self.tab_manager.active_tab() {
+            if matches!(tab.kind, TabKind::Settings) {
+                self.header.is_settings_active = true;
+                if self.explorer.is_expanded {
+                    self.explorer.is_expanded = false;
+                    self.header.is_explorer_expanded = false;
+                }
+            } else {
+                self.header.is_settings_active = false;
+            }
+
+            if matches!(tab.kind, TabKind::CodeReview { .. }) {
+                self.header.is_code_review_active = true;
+                self.ensure_code_review_documents();
+            } else {
+                self.header.is_code_review_active = false;
+            }
+        }
+    }
+
     pub fn next_tab(&mut self) {
         self.tab_manager.next_tab();
+        self.sync_active_tab_state();
         self.layout_blocks();
         if let Some(win) = self.window.as_ref() {
             win.request_redraw();
@@ -50,6 +72,7 @@ impl App {
 
     pub fn prev_tab(&mut self) {
         self.tab_manager.prev_tab();
+        self.sync_active_tab_state();
         self.layout_blocks();
         if let Some(win) = self.window.as_ref() {
             win.request_redraw();
@@ -83,6 +106,7 @@ impl App {
         for (_, mut block) in self.blocks.drain() {
             block.shell.kill();
         }
+        self.editors.clear();
         self.command_buffers.clear();
         self.last_executed_commands.clear();
         self.pane_custom_names.clear();
@@ -300,6 +324,12 @@ impl App {
     }
 
     pub fn open_settings_tab(&mut self) -> u64 {
+        if self.explorer.is_expanded {
+            self.explorer.is_expanded = false;
+            self.header.is_explorer_expanded = false;
+        }
+        self.header.is_settings_active = true;
+
         if let Some(pos) = self
             .tab_manager
             .tabs()
@@ -336,6 +366,131 @@ impl App {
         tab_id
     }
 
+    // INFO: Opens a file in the integrated code editor, adding to dedicated file-tab bar and selecting it.
+    pub fn open_editor_file(&mut self, path: &std::path::Path) -> u64 {
+        self.open_editor_file_with_preview(path, false)
+    }
+
+    // INFO: Opens a file in preview mode (replaces previous untouched preview tab) or persistent mode.
+    pub fn open_editor_file_with_preview(
+        &mut self,
+        path: &std::path::Path,
+        is_preview: bool,
+    ) -> u64 {
+        let path_buf = path.to_path_buf();
+        let path_str = path_buf.to_string_lossy().to_string();
+
+        if is_preview {
+            if let Some(prev) = self.editor_preview_file.clone()
+                && prev != path_buf
+                && !self.editor_pinned_files.contains(&prev)
+            {
+                let prev_dirty = self
+                    .editor_documents
+                    .get(&prev)
+                    .map(|d| d.dirty)
+                    .unwrap_or(false);
+                if !prev_dirty
+                    && let Some(pos) = self.editor_open_files.iter().position(|p| p == &prev)
+                {
+                    self.editor_open_files.remove(pos);
+                    self.editor_documents.remove(&prev);
+                }
+            }
+            self.editor_preview_file = Some(path_buf.clone());
+        } else {
+            // Opening persistently clears preview on this file
+            if self.editor_preview_file.as_deref() == Some(&path_buf) {
+                self.editor_preview_file = None;
+            }
+        }
+
+        if !self.editor_open_files.contains(&path_buf) {
+            self.editor_open_files.push(path_buf.clone());
+        }
+        self.editor_active_file = Some(path_buf.clone());
+        self.explorer.active_editor_file = Some(path_buf.clone());
+        self.refresh_git_status();
+
+        if !self.editor_documents.contains_key(&path_buf) {
+            let mut doc = if !path_buf.exists() {
+                let repo_root = self.code_review.repo_root.clone();
+                let matching_diff = self
+                    .code_review
+                    .diff
+                    .files
+                    .iter()
+                    .find(|f| repo_root.join(&f.path) == path_buf);
+                if let Ok(content) = akssora_git::GitInspector::file_deleted_content(
+                    &repo_root,
+                    &path_buf,
+                    matching_diff,
+                ) {
+                    let mut d = akssora_editor::Document::open(path_buf.clone(), &content);
+                    d.set_deleted(true);
+                    d
+                } else {
+                    akssora_editor::Document::open(path_buf.clone(), "")
+                }
+            } else {
+                akssora_editor::Document::open_file(path)
+                    .unwrap_or_else(|_| akssora_editor::Document::open(path_buf.clone(), ""))
+            };
+            doc.line_wrap = self.config.line_wrap;
+            doc.line_numbers = self.config.line_numbers;
+            doc.line_number_mode = self.config.line_number_mode;
+            doc.tab_size = self.config.tab_size;
+            doc.line_height = self.config.line_height;
+            self.editor_documents.insert(path_buf.clone(), doc);
+        }
+
+        let doc = self
+            .editor_documents
+            .get(&path_buf)
+            .expect("document exists");
+        let title = doc.display_title();
+
+        // Check if an editor tab already exists in tab_manager
+        if let Some(pos) = self
+            .tab_manager
+            .tabs()
+            .iter()
+            .position(|t| matches!(&t.kind, TabKind::Editor { .. }))
+        {
+            self.tab_manager.select(pos);
+            let tab_id = self.tab_manager.tabs()[pos].id;
+            if let Some(tab) = self.tab_manager.active_tab_mut() {
+                tab.title = title;
+                tab.kind = TabKind::Editor { path: path_str };
+            }
+            if let Some(doc_clone) = self.editor_documents.get(&path_buf).cloned() {
+                self.editors.insert(tab_id, doc_clone);
+            }
+            self.split_manager.active_pane_id = Some(tab_id);
+            self.header.is_code_review_active = false;
+            self.layout_blocks();
+            if let Some(win) = self.window.as_ref() {
+                win.request_redraw();
+            }
+            return tab_id;
+        }
+
+        // Otherwise create new editor tab in tab_manager
+        let tab_id = self
+            .tab_manager
+            .add_tab(title, TabKind::Editor { path: path_str });
+        if let Some(doc_clone) = self.editor_documents.get(&path_buf).cloned() {
+            self.editors.insert(tab_id, doc_clone);
+        }
+        self.split_manager.active_pane_id = Some(tab_id);
+        self.header.is_code_review_active = false;
+        self.layout_blocks();
+        if let Some(win) = self.window.as_ref() {
+            win.request_redraw();
+        }
+        tab_id
+    }
+
     pub fn close_tab(&mut self, idx: usize) {
         if self.tab_manager.len() <= 1 {
             self.prompt_confirm_exit = true;
@@ -346,11 +501,18 @@ impl App {
         }
 
         if let Some(removed) = self.tab_manager.close(idx) {
+            if matches!(removed.kind, TabKind::Editor { .. }) {
+                self.editor_open_files.clear();
+                self.editor_active_file = None;
+                self.editor_documents.clear();
+            }
+            self.editors.remove(&removed.id);
             self.command_buffers.remove(&removed.id);
             self.last_executed_commands.remove(&removed.id);
             self.pane_custom_names.remove(&removed.id);
             if let Some(tree) = self.split_trees.remove(&removed.id) {
                 for pane_id in tree.all_leaf_ids() {
+                    self.editors.remove(&pane_id);
                     self.command_buffers.remove(&pane_id);
                     self.last_executed_commands.remove(&pane_id);
                     self.pane_custom_names.remove(&pane_id);
@@ -389,7 +551,8 @@ impl App {
             .unwrap_or((self.config.window.width, self.config.window.height));
         let show_sidebar = self.config.tab_layout.show_sidebar();
         let sb_w = self.sidebar.effective_width(show_sidebar);
-        let usable_w = (win_w as f32 - sb_w).max(MIN_BLOCK_HEIGHT) as u32;
+        let exp_w = self.explorer.effective_width();
+        let usable_w = (win_w as f32 - sb_w - exp_w).max(MIN_BLOCK_HEIGHT) as u32;
         let top_h = self
             .header
             .total_height(self.config.tab_layout.includes_title_bar());

@@ -1,7 +1,7 @@
 use akssora_terminal_config::{Color, Theme};
 use akssora_terminal_parser::TerminalParser;
 use akssora_terminal_screen::TerminalGrid;
-use akssora_terminal_ui::{Header, HeaderButton, Scrollbar};
+use akssora_terminal_ui::{Header, HeaderButton, HeaderItem, Scrollbar};
 
 #[test]
 fn test_terminal_screen_and_parser_integration() {
@@ -35,7 +35,13 @@ fn test_header_ui_hit_test() {
     let close_btn = header.hit_test(window_w - 10.0, 10.0, window_w);
     assert_eq!(close_btn, Some(HeaderButton::Close));
 
-    assert!(header.in_drag_region(500.0, 10.0, window_w));
+    // INFO: Center of header contains Quick Search trigger box
+    assert_eq!(
+        header.hit_test_item(500.0, 10.0, window_w, 1, true),
+        Some(HeaderItem::QuickSearch)
+    );
+    assert!(!header.in_drag_region(500.0, 10.0, window_w));
+    assert!(header.in_drag_region(250.0, 10.0, window_w));
 }
 
 #[test]
@@ -86,7 +92,7 @@ fn test_scrollbar_geometry_and_interactions() {
     assert_eq!(y_top, 40.0);
 
     let theme = Theme::monochrome_black();
-    assert_eq!(scrollbar.thumb_color(&theme), theme.header_background);
+    assert_eq!(scrollbar.thumb_color(&theme), [0.25, 0.25, 0.27, 0.85]);
 }
 
 // INFO: Verify scrollback preserves history offset when viewing scrollback and auto-follows at bottom.
@@ -749,6 +755,136 @@ fn test_terminal_font_size_consistency_across_splits_and_ui_isolation() {
 }
 
 #[test]
+fn test_ui_font_size_configuration_hit_testing_and_backward_compatibility() {
+    use akssora_terminal_app::App;
+    use akssora_terminal_ui::{SettingsAction, SettingsView};
+
+    let mut app = App::new();
+    let mut fonts = akssora_terminal_renderer::FontManager::new();
+    fonts.set_size(14.0);
+    let mut ui_fonts = akssora_terminal_renderer::FontManager::new();
+    ui_fonts.set_size(14.0);
+    app.set_test_fonts(fonts, ui_fonts);
+
+    // Initial state
+    assert_eq!(app.current_ui_font_size(), 14.0);
+    assert_eq!(app.terminal_font_size(), 14.0);
+
+    // Increase UI font size
+    app.increase_ui_font_size();
+    assert_eq!(app.current_ui_font_size(), 15.0);
+    assert_eq!(app.config.ui_font_size, 15.0);
+    assert_eq!(
+        app.terminal_font_size(),
+        14.0,
+        "Terminal font size must remain untouched"
+    );
+
+    // Decrease UI font size
+    app.decrease_ui_font_size();
+    app.decrease_ui_font_size();
+    assert_eq!(app.current_ui_font_size(), 13.0);
+    assert_eq!(app.config.ui_font_size, 13.0);
+    assert_eq!(
+        app.terminal_font_size(),
+        14.0,
+        "Terminal font size must remain untouched"
+    );
+
+    // Reset UI font size
+    app.reset_ui_font_size();
+    assert_eq!(app.current_ui_font_size(), 14.0);
+    assert_eq!(app.config.ui_font_size, 14.0);
+
+    // Hit testing for UI font size buttons in General tab
+    let (ws_x, ws_y, ws_w, cell_h) = (0.0, 36.0, 800.0, 18.0);
+
+    let (mx, my, mw, mh) = SettingsView::ui_font_minus_button_rect(ws_x, ws_y, ws_w, cell_h);
+    let hit_minus =
+        SettingsView::hit_test_action(mx + mw * 0.5, my + mh * 0.5, ws_x, ws_y, ws_w, cell_h);
+    assert_eq!(hit_minus, Some(SettingsAction::DecreaseUiFontSize));
+
+    let (px, py, pw, ph) = SettingsView::ui_font_plus_button_rect(ws_x, ws_y, ws_w, cell_h);
+    let hit_plus =
+        SettingsView::hit_test_action(px + pw * 0.5, py + ph * 0.5, ws_x, ws_y, ws_w, cell_h);
+    assert_eq!(hit_plus, Some(SettingsAction::IncreaseUiFontSize));
+
+    let (rx, ry, rw, rh) = SettingsView::ui_font_reset_button_rect(ws_x, ws_y, ws_w, cell_h);
+    let hit_reset =
+        SettingsView::hit_test_action(rx + rw * 0.5, ry + rh * 0.5, ws_x, ws_y, ws_w, cell_h);
+    assert_eq!(hit_reset, Some(SettingsAction::ResetUiFontSize));
+
+    // Backward compatibility: load config JSON that lacks "ui_font_size"
+    let legacy_json = "{\n  \"font_size\": 16.0,\n  \"cursor_style\": \"Block\"\n}";
+    let mut legacy_config = akssora_terminal_config::Config::default();
+    legacy_config.apply_json(legacy_json);
+    assert_eq!(legacy_config.font.size, 16.0);
+    assert_eq!(
+        legacy_config.ui_font_size, 14.0,
+        "Should default safely to 14.0"
+    );
+}
+
+#[test]
+fn test_ui_font_size_settings_mouse_clicks() {
+    use akssora_terminal_app::App;
+    use akssora_terminal_ui::{SettingsView, TabKind};
+
+    let mut app = App::new();
+    let mut fonts = akssora_terminal_renderer::FontManager::new();
+    fonts.set_size(14.0);
+    let mut ui_fonts = akssora_terminal_renderer::FontManager::new();
+    ui_fonts.set_size(14.0);
+    app.set_test_fonts(fonts, ui_fonts);
+
+    // Open Settings tab
+    app.tab_manager.add_tab("Settings", TabKind::Settings);
+    app.tab_manager.select(app.tab_manager.len() - 1);
+
+    let (w, top_h, sb_w) = (1000.0, 36.0, 0.0);
+    let exp_w = app.explorer.effective_width();
+    let ws_x = sb_w + exp_w;
+    let cell_h = app.ui_cell_h();
+
+    // Simulate clicking Plus button for UI font size
+    let (px, py, pw, ph) =
+        SettingsView::ui_font_plus_button_rect(ws_x, top_h, (w - ws_x).max(0.0), cell_h);
+    let clicked_plus = app.handle_settings_clicks(px + pw * 0.5, py + ph * 0.5, w, top_h, sb_w);
+    assert!(
+        clicked_plus,
+        "Click on UI font size plus button must be handled"
+    );
+    assert_eq!(app.current_ui_font_size(), 15.0);
+
+    // Simulate clicking Minus button for UI font size
+    let cell_h2 = app.ui_cell_h();
+    let (mx, my, mw, mh) =
+        SettingsView::ui_font_minus_button_rect(ws_x, top_h, (w - ws_x).max(0.0), cell_h2);
+    let clicked_minus = app.handle_settings_clicks(mx + mw * 0.5, my + mh * 0.5, w, top_h, sb_w);
+    assert!(
+        clicked_minus,
+        "Click on UI font size minus button must be handled"
+    );
+    assert_eq!(app.current_ui_font_size(), 14.0);
+
+    // Click minus again
+    let cell_h3 = app.ui_cell_h();
+    let (mx, my, mw, mh) =
+        SettingsView::ui_font_minus_button_rect(ws_x, top_h, (w - ws_x).max(0.0), cell_h3);
+    let clicked_minus2 = app.handle_settings_clicks(mx + mw * 0.5, my + mh * 0.5, w, top_h, sb_w);
+    assert!(clicked_minus2);
+    assert_eq!(app.current_ui_font_size(), 13.0);
+
+    // Click reset button
+    let cell_h4 = app.ui_cell_h();
+    let (rx, ry, rw, rh) =
+        SettingsView::ui_font_reset_button_rect(ws_x, top_h, (w - ws_x).max(0.0), cell_h4);
+    let clicked_reset = app.handle_settings_clicks(rx + rw * 0.5, ry + rh * 0.5, w, top_h, sb_w);
+    assert!(clicked_reset);
+    assert_eq!(app.current_ui_font_size(), 14.0);
+}
+
+#[test]
 fn test_tab_close_button_geometry_and_hit_target() {
     let header = Header::new("Akssora");
     let window_w = 1200.0;
@@ -850,7 +986,7 @@ fn test_settings_tab_selection_and_preference_persistence() {
 
     // Verify category tab hit test
     for (i, &tab) in SettingsTab::ALL.iter().enumerate() {
-        let (tx, ty, tw, th) = SettingsView::tab_button_rect(i, ws_x, ws_y, cell_h);
+        let (tx, ty, _tw, _th) = SettingsView::tab_button_rect(i, ws_x, ws_y, cell_h);
         let action = SettingsView::hit_test_action_tab(
             tx + 5.0,
             ty + 5.0,
@@ -860,20 +996,24 @@ fn test_settings_tab_selection_and_preference_persistence() {
             cell_h,
             SettingsTab::General,
             &[],
+            false,
+            false,
         );
         assert_eq!(action, Some(SettingsAction::SelectTab(tab)));
     }
 
     // Verify config serialization of appearance and editor options
-    let mut config = Config::default();
-    config.theme_name = "Slate Dark".to_string();
-    config.cursor_style = "Beam".to_string();
-    config.cursor_blink = false;
-    config.tab_size = 2;
-    config.line_numbers = false;
+    let config = Config {
+        theme_name: "Custom Dark".to_string(),
+        cursor_style: "Beam".to_string(),
+        cursor_blink: false,
+        tab_size: 2,
+        line_numbers: false,
+        ..Config::default()
+    };
 
     let json = config.to_json();
-    assert!(json.contains("\"theme\": \"Slate Dark\""));
+    assert!(json.contains("\"theme\": \"Custom Dark\""));
     assert!(json.contains("\"cursor_style\": \"Beam\""));
     assert!(json.contains("\"cursor_blink\": false"));
     assert!(json.contains("\"tab_size\": 2"));
@@ -881,9 +1021,2453 @@ fn test_settings_tab_selection_and_preference_persistence() {
 
     let mut restored = Config::default();
     restored.apply_json(&json);
-    assert_eq!(restored.theme_name, "Slate Dark");
+    assert_eq!(restored.theme_name, "Custom Dark");
     assert_eq!(restored.cursor_style, "Beam");
-    assert_eq!(restored.cursor_blink, false);
+    assert!(!restored.cursor_blink);
     assert_eq!(restored.tab_size, 2);
-    assert_eq!(restored.line_numbers, false);
+    assert!(!restored.line_numbers);
+}
+
+// INFO: Verifies line number dropdown trigger and option hit testing when open vs closed.
+#[test]
+fn test_line_number_dropdown_interaction() {
+    use akssora_terminal_config::LineNumberMode;
+    use akssora_terminal_ui::{SettingsAction, SettingsTab, SettingsView};
+
+    let cell_h = 18.0;
+    let ws_x = 0.0;
+    let ws_y = 40.0;
+    let ws_w = 800.0;
+
+    let (lx, ly, lw, _lh) = SettingsView::line_number_dropdown_rect(ws_x, ws_y, cell_h);
+    assert_eq!(lw, SettingsView::LINE_NUMBER_DROPDOWN_WIDTH);
+
+    // Clicking trigger triggers toggle
+    let trigger_hit = SettingsView::hit_test_action_tab(
+        lx + 10.0,
+        ly + 10.0,
+        ws_x,
+        ws_y,
+        ws_w,
+        cell_h,
+        SettingsTab::Editor,
+        &[],
+        false,
+        false,
+    );
+    assert_eq!(trigger_hit, Some(SettingsAction::ToggleLineNumberDropdown));
+
+    // When dropdown is closed, clicking where items would be does NOT hit SelectLineNumberMode
+    let (ix0, iy0, _, _) = SettingsView::line_number_dropdown_item_rect(0, ws_x, ws_y, cell_h);
+    let closed_hit = SettingsView::hit_test_action_tab(
+        ix0 + 5.0,
+        iy0 + 5.0,
+        ws_x,
+        ws_y,
+        ws_w,
+        cell_h,
+        SettingsTab::Editor,
+        &[],
+        false,
+        false,
+    );
+    assert_ne!(
+        closed_hit,
+        Some(SettingsAction::SelectLineNumberMode(LineNumberMode::Off))
+    );
+
+    // When dropdown is open, clicking items hits SelectLineNumberMode for each mode
+    for (idx, &mode) in LineNumberMode::ALL.iter().enumerate() {
+        let (ix, iy, _, _) = SettingsView::line_number_dropdown_item_rect(idx, ws_x, ws_y, cell_h);
+        let open_hit = SettingsView::hit_test_action_tab(
+            ix + 5.0,
+            iy + 5.0,
+            ws_x,
+            ws_y,
+            ws_w,
+            cell_h,
+            SettingsTab::Editor,
+            &[],
+            false,
+            true, // line_number_dropdown_open
+        );
+        assert_eq!(open_hit, Some(SettingsAction::SelectLineNumberMode(mode)));
+    }
+}
+
+// INFO: Verifies inline Git change indicators (added, modified, deleted) in editor documents and gutter state.
+#[test]
+fn test_editor_inline_git_change_indicators() {
+    use akssora_editor::Document;
+    use akssora_git::{GIT_DELETED_COLOR, LineGitChange};
+    use std::path::PathBuf;
+
+    let path = PathBuf::from("src/example.rs");
+    let baseline = "fn main() {\n    println!(\"hello\");\n}\n";
+    let mut doc = Document::open(path.clone(), baseline);
+    doc.set_git_original_content(Some(baseline.to_string()));
+
+    // Verify baseline colors
+    assert_eq!(LineGitChange::Added.color(), [0.45, 0.78, 0.45, 0.95]);
+    assert_eq!(LineGitChange::Modified.color(), [0.88, 0.68, 0.28, 0.95]);
+    assert_eq!(GIT_DELETED_COLOR, [0.85, 0.30, 0.30, 0.95]);
+
+    // Initially clean
+    let statuses = doc.git_line_statuses();
+    assert!(
+        statuses
+            .iter()
+            .all(|s| s.change.is_none() && !s.deleted_above && !s.deleted_below)
+    );
+
+    // Modify second line
+    doc.cursor = (1, 20);
+    doc.insert_str(" // modified");
+    let statuses = doc.git_line_statuses();
+    assert_eq!(statuses[1].change, Some(LineGitChange::Modified));
+
+    // Add new line
+    doc.cursor = (2, 0);
+    doc.insert_str("    let x = 42;\n");
+    let statuses = doc.git_line_statuses();
+    assert_eq!(statuses[1].change, Some(LineGitChange::Modified));
+    assert_eq!(statuses[2].change, Some(LineGitChange::Added));
+
+    // Delete line without replacement (e.g. "println!(\"hello\");" deleted)
+    doc.buffer = akssora_editor::TextBuffer::from_text("fn main() {\n}\n");
+    let statuses = doc.git_line_statuses();
+    assert_eq!(statuses.len(), 3);
+    assert_eq!(statuses[0].change, None);
+    assert!(statuses[1].deleted_above);
+}
+
+// INFO: Verifies that terminal sidebar and file explorer can remain open simultaneously with accurate layout calculation.
+#[test]
+fn test_explorer_and_sidebar_simultaneous_layout() {
+    use akssora_terminal_app::App;
+    use akssora_terminal_ui::HeaderItem;
+
+    let mut app = App::new();
+    app.config.tab_layout = akssora_terminal_config::TabLayoutPreference::Sidebar;
+    app.config.window.width = 1200;
+    app.config.window.height = 800;
+
+    let tab_id = app.open_terminal_tab();
+    app.sidebar.is_expanded = true;
+    app.sidebar.width = 240.0;
+
+    // INFO: Explorer is initially collapsed
+    assert!(!app.explorer.is_expanded);
+    app.layout_blocks();
+    let b1 = app.get_block(tab_id).expect("block exists");
+    assert_eq!(b1.x, 240.0);
+
+    // INFO: Toggle explorer on; both sidebar and explorer are now open simultaneously
+    app.toggle_explorer();
+    assert!(app.explorer.is_expanded);
+    assert!(app.sidebar.is_expanded);
+    assert_eq!(app.explorer.width, 240.0);
+
+    app.layout_blocks();
+    let b2 = app.get_block(tab_id).expect("block exists");
+    assert_eq!(b2.x, 480.0);
+    assert_eq!(b2.width, 1200 - 480);
+
+    // INFO: Verify header hit test detects the ExplorerToggle button
+    let (ex, ey, ew, eh) = app.header.explorer_toggle_rect();
+    let item = app
+        .header
+        .hit_test_item(ex + ew / 2.0, ey + eh / 2.0, 1200.0, 1, false);
+    assert_eq!(item, Some(HeaderItem::ExplorerToggle));
+
+    // INFO: Toggle explorer off again
+    app.toggle_explorer();
+    assert!(!app.explorer.is_expanded);
+    app.layout_blocks();
+    let b3 = app.get_block(tab_id).expect("block exists");
+    assert_eq!(b3.x, 240.0);
+}
+
+// INFO: Verifies file explorer CRUD workflow and integrated editor opening, typing, and saving.
+#[test]
+fn test_editor_integration_and_workspace_file_crud() {
+    use akssora_terminal_app::App;
+    use akssora_terminal_ui::{ExplorerContextMenu, TabKind};
+
+    let temp_dir = std::env::temp_dir().join(format!("akssora_test_ws_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+
+    let mut app = App::new();
+    app.set_explorer_root(&temp_dir).expect("set explorer root");
+
+    // INFO: Create new file inside explorer tree
+    let created_file = app
+        .explorer
+        .tree
+        .create_file(&temp_dir, "hello.rs")
+        .expect("create file");
+    assert!(created_file.exists());
+
+    // INFO: Open file inside integrated code editor
+    let tab_id = app.open_editor_file(&created_file);
+    assert_eq!(app.tab_manager.active_id(), Some(tab_id));
+
+    let tab = app.tab_manager.active_tab().expect("active tab");
+    assert_eq!(
+        tab.kind,
+        TabKind::Editor {
+            path: created_file.to_string_lossy().to_string()
+        }
+    );
+
+    // INFO: Insert text and save document
+    {
+        let doc = app.active_editor_mut().expect("active editor doc");
+        doc.insert_str("fn main() {\n    println!(\"Hello World\");\n}\n");
+        doc.save().expect("save document");
+    }
+
+    let disk_content = std::fs::read_to_string(&created_file).expect("read file");
+    assert!(disk_content.contains("println!(\"Hello World\")"));
+
+    // INFO: Test context menu creation for items
+    let menu = ExplorerContextMenu::new(100.0, 100.0, Some(created_file.clone()));
+    assert!(
+        menu.items
+            .contains(&akssora_terminal_ui::ExplorerContextAction::OpenInEditor)
+    );
+    assert!(
+        menu.items
+            .contains(&akssora_terminal_ui::ExplorerContextAction::OpenInSplit)
+    );
+    assert!(
+        menu.items
+            .contains(&akssora_terminal_ui::ExplorerContextAction::OpenTerminalHere)
+    );
+    assert!(
+        menu.items
+            .contains(&akssora_terminal_ui::ExplorerContextAction::Delete)
+    );
+
+    // INFO: Verify opening file in split pane of terminal
+    let split_pane_id = app.open_file_in_split_pane(&created_file);
+    assert!(split_pane_id.is_some());
+
+    // INFO: Verify hidden files are always shown by default
+    assert!(app.explorer.tree.show_hidden);
+
+    // INFO: Clean up test directory
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_editor_file_tab_bar_multi_file_and_switching() {
+    // INFO: Tests the dedicated editor file-tab bar multi-file lifecycle, switching, and closing.
+    let mut app = akssora_terminal_app::App::new();
+    let temp_dir =
+        std::env::temp_dir().join(format!("akssora_app_tabbar_test_{}", rand::random::<u64>()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    let file1 = temp_dir.join("main.rs");
+    let file2 = temp_dir.join("lib.rs");
+    std::fs::write(&file1, "fn main() {}\n").unwrap();
+    std::fs::write(&file2, "pub fn hello() {}\n").unwrap();
+
+    // INFO: Open first file
+    app.open_editor_file(&file1);
+    assert_eq!(app.editor_open_files.len(), 1);
+    assert_eq!(app.editor_active_file.as_ref(), Some(&file1));
+
+    // INFO: Open second file
+    app.open_editor_file(&file2);
+    assert_eq!(app.editor_open_files.len(), 2);
+    assert_eq!(app.editor_active_file.as_ref(), Some(&file2));
+
+    // INFO: Verify file tabs collection
+    let tabs = app.collect_editor_file_tabs();
+    assert_eq!(tabs.len(), 2);
+    assert_eq!(tabs[0].title, "main.rs");
+    assert!(!tabs[0].is_active);
+    assert_eq!(tabs[1].title, "lib.rs");
+    assert!(tabs[1].is_active);
+    assert!(!tabs[1].is_dirty);
+
+    // INFO: Edit active document (file2) and check dirty indicator
+    {
+        let doc = app.active_editor_mut().unwrap();
+        doc.insert_str("// modified\n");
+        assert!(doc.dirty);
+    }
+    let tabs_dirty = app.collect_editor_file_tabs();
+    assert!(tabs_dirty[1].is_dirty);
+
+    // INFO: Switch back to file1 and verify active file changed
+    app.select_editor_file_tab(0);
+    assert_eq!(app.editor_active_file.as_ref(), Some(&file1));
+    {
+        let doc = app.active_editor().unwrap();
+        assert_eq!(doc.buffer.rope().to_string(), "fn main() {}\n");
+    }
+
+    // INFO: Switch back to file2 and verify edits preserved
+    app.select_editor_file_tab(1);
+    assert_eq!(app.editor_active_file.as_ref(), Some(&file2));
+    {
+        let doc = app.active_editor().unwrap();
+        assert!(doc.buffer.rope().to_string().starts_with("// modified\n"));
+    }
+
+    // INFO: Close file2 tab
+    app.close_editor_file_tab(1);
+    assert_eq!(app.editor_open_files.len(), 1);
+    assert_eq!(app.editor_active_file.as_ref(), Some(&file1));
+
+    // INFO: Close file1 tab; editor tab should be closed from tab manager
+    app.close_editor_file_tab(0);
+    assert_eq!(app.editor_open_files.len(), 0);
+    assert!(app.editor_active_file.is_none());
+    assert!(app.active_editor().is_none());
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_editor_tab_bar_hit_testing() {
+    // INFO: Tests geometry calculation and hit-testing for the dedicated editor file-tab bar.
+    use akssora_terminal_ui::{EditorTabBar, EditorTabTarget};
+
+    let ws_x = 240.0;
+    let ws_y = 38.0;
+    let ws_w = 800.0;
+    let tab_count = 3;
+
+    let (t0_x, t0_y, _t0_w, t0_h) = EditorTabBar::tab_rect(0, tab_count, ws_x, ws_y, ws_w);
+    assert_eq!(t0_x, 240.0);
+    assert_eq!(t0_y, 38.0);
+    assert_eq!(t0_h, EditorTabBar::HEIGHT);
+
+    // INFO: Click inside tab 0 body
+    let target = EditorTabBar::hit_test(t0_x + 20.0, t0_y + 10.0, ws_x, ws_y, ws_w, tab_count);
+    assert_eq!(target, Some(EditorTabTarget::Tab(0)));
+
+    // INFO: Click inside tab 0 close button
+    let (c0_x, c0_y, _cw, _ch) = EditorTabBar::close_rect(0, tab_count, ws_x, ws_y, ws_w);
+    let target_close = EditorTabBar::hit_test(c0_x + 4.0, c0_y + 4.0, ws_x, ws_y, ws_w, tab_count);
+    assert_eq!(target_close, Some(EditorTabTarget::Close(0)));
+
+    // INFO: Click outside tab bar vertically
+    let outside = EditorTabBar::hit_test(t0_x + 20.0, ws_y + 40.0, ws_x, ws_y, ws_w, tab_count);
+    assert_eq!(outside, None);
+}
+
+#[test]
+fn test_quick_search_ui_and_fuzzy_matching() {
+    // INFO: Tests quick file search scanning, exclusions, fuzzy matching, and keyboard selection.
+    use akssora_terminal_ui::quick_search::{QuickSearchUi, fuzzy_match};
+    use std::fs;
+
+    let temp_dir = std::env::temp_dir().join(format!("akssora_qs_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(temp_dir.join("src")).unwrap();
+    fs::create_dir_all(temp_dir.join("tests")).unwrap();
+    fs::create_dir_all(temp_dir.join("target/debug")).unwrap();
+    fs::create_dir_all(temp_dir.join(".git")).unwrap();
+
+    fs::write(temp_dir.join("src/main.rs"), "fn main() {}\n").unwrap();
+    fs::write(temp_dir.join("src/utils.rs"), "pub fn helper() {}\n").unwrap();
+    fs::write(temp_dir.join("tests/test_run.rs"), "// test\n").unwrap();
+    fs::write(temp_dir.join("target/debug/output.bin"), "bin").unwrap();
+    fs::write(temp_dir.join(".git/config"), "git config").unwrap();
+    fs::write(temp_dir.join(".hidden.txt"), "secret").unwrap();
+
+    let exclusions = vec!["target".to_string(), ".git".to_string()];
+    let mut qs = QuickSearchUi::new();
+    assert!(!qs.is_open);
+
+    // INFO: Toggle open and scan with empty query (respecting exclusions and hidden flag)
+    qs.toggle(&temp_dir, &exclusions, false);
+    assert!(qs.is_open);
+    qs.update_search(&temp_dir, &exclusions, false);
+
+    // INFO: Verify exclusions: target and .git must not be present, and hidden files excluded
+    let paths: Vec<String> = qs.results.iter().map(|r| r.relative_path.clone()).collect();
+    assert!(paths.contains(&"src/main.rs".to_string()));
+    assert!(paths.contains(&"src/utils.rs".to_string()));
+    assert!(paths.contains(&"tests/test_run.rs".to_string()));
+    assert!(!paths.iter().any(|p| p.starts_with("target")));
+    assert!(!paths.iter().any(|p| p.starts_with(".git")));
+    assert!(!paths.contains(&".hidden.txt".to_string()));
+
+    // INFO: Now allow hidden files and verify .hidden.txt is indexed
+    qs.update_search(&temp_dir, &exclusions, true);
+    let paths_with_hidden: Vec<String> =
+        qs.results.iter().map(|r| r.relative_path.clone()).collect();
+    assert!(paths_with_hidden.contains(&".hidden.txt".to_string()));
+
+    // INFO: Fuzzy matching queries
+    qs.query = "main".to_string();
+    qs.update_search(&temp_dir, &exclusions, false);
+    assert!(!qs.results.is_empty());
+    assert_eq!(qs.results[0].filename, "main.rs");
+
+    qs.query = "util".to_string();
+    qs.update_search(&temp_dir, &exclusions, false);
+    assert!(!qs.results.is_empty());
+    assert_eq!(qs.results[0].filename, "utils.rs");
+
+    // INFO: Keyboard navigation wrapping
+    qs.query = "".to_string();
+    qs.update_search(&temp_dir, &exclusions, false);
+    let count = qs.results.len();
+    assert!(count >= 3);
+    assert_eq!(qs.selected_index, 0);
+
+    qs.select_next();
+    assert_eq!(qs.selected_index, 1);
+    qs.select_prev();
+    assert_eq!(qs.selected_index, 0);
+    qs.select_prev();
+    assert_eq!(qs.selected_index, 0); // INFO: Clamps at top
+
+    // INFO: Selection retrieval
+    let selected = qs.selected_result().unwrap();
+    assert_eq!(selected.path, qs.results[0].path);
+
+    // INFO: Geometry and hit testing
+    let (ox, oy, ow, oh) = QuickSearchUi::overlay_rect(800.0, 38.0, count);
+    assert!(ow > 0.0);
+    assert!(oh > 0.0);
+    let hit_first = qs.hit_test_item(ox + 50.0, oy + 55.0, 800.0, 38.0);
+    assert_eq!(hit_first, Some(0));
+
+    // INFO: Direct fuzzy match score sanity checks
+    assert!(fuzzy_match("main", "main.rs", "src/main.rs").is_some());
+    assert!(fuzzy_match("mr", "main.rs", "src/main.rs").is_some());
+    assert!(fuzzy_match("xyz", "main.rs", "src/main.rs").is_none());
+
+    // INFO: Close search palette
+    qs.close();
+    assert!(!qs.is_open);
+    assert_eq!(qs.query, "");
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_explorer_shortcuts_and_file_operations() {
+    // INFO: Tests folder targeting, % file shortcut, inline rename updating tabs, and delete handling.
+    use akssora_terminal_app::App;
+    use akssora_terminal_ui::{
+        ExplorerContextAction, ExplorerContextMenu, InlineInputMode, InlineInputState,
+    };
+    use std::fs;
+
+    let temp_dir = std::env::temp_dir().join(format!("akssora_ops_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_dir);
+    let sub_dir = temp_dir.join("subfolder");
+    fs::create_dir_all(&sub_dir).unwrap();
+    let file1 = sub_dir.join("hello.rs");
+    fs::write(&file1, "fn hello() {}\n").unwrap();
+
+    let mut app = App::default();
+    let _ = app.set_explorer_root(temp_dir.clone());
+
+    // INFO: 1. Folder targeting without selection defaults to root directory
+    assert_eq!(app.selected_explorer_directory(), temp_dir);
+
+    // INFO: Select subfolder and verify target directory
+    app.explorer.tree.selected_paths.clear();
+    app.explorer.tree.selected_paths.insert(sub_dir.clone());
+    assert_eq!(app.selected_explorer_directory(), sub_dir);
+
+    // INFO: Select file within subfolder and verify target directory resolves to parent folder
+    app.explorer.tree.selected_paths.clear();
+    app.explorer.tree.selected_paths.insert(file1.clone());
+    assert_eq!(app.selected_explorer_directory(), sub_dir);
+
+    // INFO: 2. Open file in editor and test inline rename tab synchronization
+    app.open_editor_file(&file1);
+    assert_eq!(app.editor_open_files.len(), 1);
+    assert_eq!(app.editor_active_file.as_ref(), Some(&file1));
+
+    let renamed_file = sub_dir.join("world.rs");
+    fs::rename(&file1, &renamed_file).unwrap();
+    app.handle_file_renamed(&file1, &renamed_file);
+
+    // INFO: Verify open editor file tabs and documents updated immediately
+    assert_eq!(app.editor_open_files[0], renamed_file);
+    assert_eq!(app.editor_active_file.as_ref(), Some(&renamed_file));
+    assert!(app.editor_documents.contains_key(&renamed_file));
+    assert!(!app.editor_documents.contains_key(&file1));
+
+    let tabs = app.collect_editor_file_tabs();
+    assert_eq!(tabs[0].title, "world.rs");
+
+    // INFO: 3. Test delete synchronization: deleting open file removes tab
+    fs::remove_file(&renamed_file).unwrap();
+    app.handle_file_deleted(&renamed_file);
+    assert_eq!(app.editor_open_files.len(), 0);
+    assert!(app.editor_active_file.is_none());
+
+    // INFO: 4. Test InlineInputState validation error display
+    let mut inline_input = InlineInputState {
+        mode: InlineInputMode::NewFile,
+        text: "".to_string(),
+        parent_dir: sub_dir.clone(),
+        error: None,
+    };
+    assert!(inline_input.error.is_none());
+    inline_input.error = Some("Filename cannot be empty".to_string());
+    assert_eq!(
+        inline_input.error.as_deref(),
+        Some("Filename cannot be empty")
+    );
+
+    // INFO: 5. Verify ExplorerContextMenu includes CopyPath and RevealInFileManager
+    let menu = ExplorerContextMenu::new(100.0, 100.0, Some(sub_dir.clone()));
+    let actions: &[ExplorerContextAction] = &menu.items;
+    assert!(actions.contains(&ExplorerContextAction::CopyPath));
+    assert!(actions.contains(&ExplorerContextAction::RevealInFileManager));
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_explorer_and_editor_tabs_enhancements() {
+    use akssora_terminal_app::App;
+    use akssora_terminal_config::{Action, Keybindings};
+    use akssora_terminal_ui::{EditorTabBar, EditorTabTarget, file_type_icon};
+    use std::fs;
+
+    // 1. Verify Keybindings for editor tab closing actions
+    let kb = Keybindings::default();
+    assert_eq!(kb.shortcut_for(Action::CloseEditorTab), Some("Ctrl+W"));
+    assert_eq!(
+        kb.shortcut_for(Action::CloseOtherEditorTabs),
+        Some("Ctrl+Shift+W")
+    );
+    assert_eq!(
+        kb.shortcut_for(Action::CloseAllEditorTabs),
+        Some("Ctrl+K, Ctrl+W")
+    );
+
+    // Verify file_type_icon helper
+    assert_eq!(file_type_icon("main.rs"), "\u{2699}");
+    assert_eq!(file_type_icon("package.json"), "\u{2756}");
+    assert_eq!(file_type_icon("index.html"), "\u{25C8}");
+    assert_eq!(file_type_icon("README.md"), "\u{2261}");
+
+    let temp_dir =
+        std::env::temp_dir().join(format!("akssora_tabs_enh_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_dir);
+    fs::create_dir_all(&temp_dir).unwrap();
+    let file1 = temp_dir.join("main.rs");
+    let file2 = temp_dir.join("lib.rs");
+    let file3 = temp_dir.join("preview.rs");
+    fs::write(&file1, "fn main() {}\n").unwrap();
+    fs::write(&file2, "pub fn lib() {}\n").unwrap();
+    fs::write(&file3, "fn preview() {}\n").unwrap();
+
+    let mut app = App::default();
+    app.config.auto_save = false;
+    let _ = app.set_explorer_root(temp_dir.clone());
+
+    // 2. Open persistent file and verify Explorer active file highlight & metadata
+    app.open_editor_file(&file1);
+    assert_eq!(app.editor_open_files.len(), 1);
+    assert_eq!(app.editor_active_file.as_deref(), Some(file1.as_path()));
+    assert_eq!(
+        app.explorer.active_editor_file.as_deref(),
+        Some(file1.as_path())
+    );
+
+    let tabs = app.collect_editor_file_tabs();
+    assert_eq!(tabs.len(), 1);
+    assert_eq!(tabs[0].title, "main.rs");
+    assert_eq!(tabs[0].relative_path, "main.rs");
+    assert!(!tabs[0].is_preview);
+    assert!(!tabs[0].is_pinned);
+
+    // 3. Open file in preview mode
+    app.open_editor_file_with_preview(&file3, true);
+    assert_eq!(app.editor_open_files.len(), 2);
+    assert_eq!(app.editor_preview_file.as_deref(), Some(file3.as_path()));
+    let tabs = app.collect_editor_file_tabs();
+    assert!(
+        tabs.iter()
+            .find(|t| t.title == "preview.rs")
+            .unwrap()
+            .is_preview
+    );
+
+    // 4. Pin a tab and verify pin state & ordering
+    app.toggle_pin_editor_file(&file3);
+    assert!(app.editor_pinned_files.contains(&file3));
+    assert!(app.editor_preview_file.is_none()); // Pinning promotes preview
+    let tabs = app.collect_editor_file_tabs();
+    assert_eq!(tabs[0].title, "preview.rs"); // Pinned tabs sort to front
+    assert!(tabs[0].is_pinned);
+
+    // 5. Drag and drop reordering
+    app.open_editor_file(&file2);
+    assert_eq!(app.editor_open_files.len(), 3);
+    let orig_0 = app.editor_open_files[0].clone();
+    let orig_1 = app.editor_open_files[1].clone();
+    app.reorder_editor_file_tab(0, 1);
+    assert_eq!(app.editor_open_files[0], orig_1);
+    assert_eq!(app.editor_open_files[1], orig_0);
+
+    // 6. Dirty unsaved changes confirmation prompt
+    if let Some(doc) = app.editor_documents.get_mut(&file1) {
+        doc.dirty = true;
+    }
+    let f1_idx = app
+        .editor_open_files
+        .iter()
+        .position(|p| p == &file1)
+        .unwrap();
+    app.request_close_editor_tab(f1_idx);
+    assert!(app.unsaved_prompt_target.is_some());
+    // Cancel prompt keeps file open and preserved
+    app.cancel_prompt_action();
+    assert!(app.unsaved_prompt_target.is_none());
+    assert!(app.editor_open_files.contains(&file1));
+
+    // 7. Hit testing pin and tab targets
+    let (ws_x, top_h, ws_w) = (0.0, 0.0, 800.0);
+    let hit_tab = EditorTabBar::hit_test(20.0, 14.0, ws_x, top_h, ws_w, 3);
+    assert!(matches!(hit_tab, Some(EditorTabTarget::Tab(0))));
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_explorer_git_status_states() {
+    use akssora_git::{FileGitStatus, GitFileChange, GitRepoStatus};
+    use akssora_terminal_app::App;
+    use std::path::PathBuf;
+
+    let mut app = App::default();
+    let root = PathBuf::from("/test/workspace");
+    app.explorer.tree.root_path = root.clone();
+
+    let repo_status = GitRepoStatus {
+        branch: "main".to_string(),
+        clean: false,
+        changes: vec![
+            GitFileChange {
+                path: root.join("src/modified.rs"),
+                status: FileGitStatus::Modified,
+            },
+            GitFileChange {
+                path: root.join("src/new_file.rs"),
+                status: FileGitStatus::Added,
+            },
+            GitFileChange {
+                path: root.join("src/deleted.rs"),
+                status: FileGitStatus::Deleted,
+            },
+            GitFileChange {
+                path: root.join("tests/untracked.rs"),
+                status: FileGitStatus::Untracked,
+            },
+            GitFileChange {
+                path: root.join("src/renamed.rs"),
+                status: FileGitStatus::Renamed,
+            },
+            GitFileChange {
+                path: root.join("conflict.txt"),
+                status: FileGitStatus::Conflict,
+            },
+        ],
+        ..Default::default()
+    };
+
+    app.explorer.git_status = Some(repo_status.clone());
+
+    // 1. Check exact file status lookups
+    assert_eq!(
+        repo_status.file_status(&root, &root.join("src/modified.rs")),
+        Some(FileGitStatus::Modified)
+    );
+    assert_eq!(
+        repo_status.file_status(&root, &root.join("src/new_file.rs")),
+        Some(FileGitStatus::Added)
+    );
+    assert_eq!(
+        repo_status.file_status(&root, &root.join("src/deleted.rs")),
+        Some(FileGitStatus::Deleted)
+    );
+    assert_eq!(
+        repo_status.file_status(&root, &root.join("tests/untracked.rs")),
+        Some(FileGitStatus::Untracked)
+    );
+    assert_eq!(
+        repo_status.file_status(&root, &root.join("src/renamed.rs")),
+        Some(FileGitStatus::Renamed)
+    );
+    assert_eq!(
+        repo_status.file_status(&root, &root.join("conflict.txt")),
+        Some(FileGitStatus::Conflict)
+    );
+
+    // 2. Check directory status bubbling
+    assert_eq!(
+        repo_status.file_status(&root, &root.join("src")),
+        Some(FileGitStatus::Modified)
+    );
+    assert_eq!(
+        repo_status.file_status(&root, &root.join("tests")),
+        Some(FileGitStatus::Untracked)
+    );
+
+    // 3. Unmodified file returns None
+    assert_eq!(
+        repo_status.file_status(&root, &root.join("README.md")),
+        None
+    );
+
+    // 4. Verify status badge labels, icons, and subtle colors
+    assert_eq!(FileGitStatus::Modified.badge_label(), "M");
+    assert_eq!(FileGitStatus::Added.badge_label(), "A");
+    assert_eq!(FileGitStatus::Deleted.badge_label(), "D");
+    assert_eq!(FileGitStatus::Untracked.badge_label(), "U");
+    assert_eq!(FileGitStatus::Renamed.badge_label(), "R");
+    assert_eq!(FileGitStatus::Conflict.badge_label(), "!");
+
+    assert_eq!(FileGitStatus::Modified.status_icon(), "\u{2022}");
+    assert_eq!(FileGitStatus::Added.status_icon(), "+");
+    assert_eq!(FileGitStatus::Deleted.status_icon(), "-");
+    assert_eq!(FileGitStatus::Untracked.status_icon(), "?");
+    assert_eq!(FileGitStatus::Renamed.status_icon(), "\u{2192}");
+    assert_eq!(FileGitStatus::Conflict.status_icon(), "!");
+
+    assert_eq!(FileGitStatus::Modified.status_description(), "Modified");
+    assert_eq!(FileGitStatus::Added.status_description(), "Added");
+    assert_eq!(FileGitStatus::Deleted.status_description(), "Deleted");
+    assert_eq!(FileGitStatus::Untracked.status_description(), "Untracked");
+    assert_eq!(FileGitStatus::Renamed.status_description(), "Renamed");
+}
+
+#[test]
+fn test_inline_diff_view_features() {
+    use akssora_editor::Document;
+    use akssora_git::{LineGitChange, compute_line_diff};
+    use akssora_terminal_config::{Action, Keybindings};
+    use akssora_terminal_ui::{EditorTabBar, EditorTabTarget, EditorToolbarAction};
+    use std::path::PathBuf;
+
+    // 1. Verify Document has inline_diff disabled by default in editor and can be toggled
+    let mut doc = Document::open(
+        PathBuf::from("test.rs"),
+        "fn main() {\n    println!(\"hello\");\n}\n",
+    );
+    assert!(!doc.inline_diff);
+    doc.inline_diff = true;
+    assert!(doc.inline_diff);
+    doc.inline_diff = false;
+    assert!(!doc.inline_diff);
+
+    // 2. Baseline Myers line diff inspection with removed lines text and original modified line
+    let orig = &["fn main() {", "    let old = 1;", "    to_delete();", "}"];
+    let curr = &[
+        "fn main() {",
+        "    let new = 2;",
+        "    added_1();",
+        "    added_2();",
+        "}",
+    ];
+    let diff = compute_line_diff(orig, curr);
+    assert_eq!(diff.len(), 5);
+    assert_eq!(diff[0].change, None);
+    assert_eq!(diff[1].change, Some(LineGitChange::Modified));
+    assert_eq!(diff[1].original_line.as_deref(), Some("    let old = 1;"));
+    assert_eq!(diff[2].change, Some(LineGitChange::Modified));
+    assert_eq!(diff[2].original_line.as_deref(), Some("    to_delete();"));
+    assert_eq!(diff[3].change, Some(LineGitChange::Added));
+    assert_eq!(diff[4].change, None);
+
+    let orig_del = &["fn main() {", "    remove_me();", "}"];
+    let curr_del = &["fn main() {", "}"];
+    let diff_del = compute_line_diff(orig_del, curr_del);
+    assert_eq!(diff_del.len(), 2);
+    assert!(diff_del[1].deleted_above);
+    assert_eq!(
+        diff_del[1].deleted_lines,
+        vec!["    remove_me();".to_string()]
+    );
+
+    // 3. Verify EditorTabBar toolbar hit testing for ToggleInlineDiff
+    let ws_x = 240.0;
+    let ws_y = 38.0;
+    let ws_w = 800.0;
+    let (bx, by, bw, bh) =
+        EditorTabBar::toolbar_rect(EditorToolbarAction::ToggleInlineDiff, ws_x, ws_y, ws_w);
+    assert!(bw > 0.0 && bh > 0.0);
+
+    let hit = EditorTabBar::hit_test_toolbar(bx + 4.0, by + 4.0, ws_x, ws_y, ws_w);
+    assert_eq!(hit, Some(EditorToolbarAction::ToggleInlineDiff));
+
+    let target = EditorTabBar::hit_test_ex(bx + 4.0, by + 4.0, ws_x, ws_y, ws_w, 2, false);
+    assert_eq!(target, Some(EditorTabTarget::ToggleInlineDiff));
+
+    // 4. Verify Keybinding for Action::ToggleInlineDiff
+    let kb = Keybindings::default();
+    assert_eq!(
+        kb.shortcut_for(Action::ToggleInlineDiff),
+        Some("Ctrl+Alt+D")
+    );
+}
+
+// INFO: Verifies editor space key behavior across beginning, middle, end of lines, empty lines, and selection replacement.
+#[test]
+fn test_editor_space_key_interactions() {
+    use akssora_editor::Document;
+
+    let mut doc = Document::new();
+    assert_eq!(doc.cursor, (0, 0));
+
+    // 1. Space on empty document
+    doc.insert_char_smart(' ');
+    assert_eq!(doc.cursor, (0, 1));
+    assert_eq!(doc.buffer.get_line(0).as_deref(), Some(" "));
+
+    // 2. Space at the end of line
+    doc.insert_str("Hello");
+    assert_eq!(doc.cursor, (0, 6));
+    assert_eq!(doc.buffer.get_line(0).as_deref(), Some(" Hello"));
+    doc.insert_char_smart(' ');
+    assert_eq!(doc.cursor, (0, 7));
+    assert_eq!(doc.buffer.get_line(0).as_deref(), Some(" Hello "));
+
+    // 3. Space in the middle of text
+    doc.cursor = (0, 3);
+    doc.insert_char_smart(' ');
+    assert_eq!(doc.cursor, (0, 4));
+    assert_eq!(doc.buffer.get_line(0).as_deref(), Some(" He llo "));
+
+    // 4. Space at beginning of line
+    doc.move_to_line_start(false);
+    assert_eq!(doc.cursor, (0, 0));
+    doc.insert_char_smart(' ');
+    assert_eq!(doc.cursor, (0, 1));
+    assert_eq!(doc.buffer.get_line(0).as_deref(), Some("  He llo "));
+
+    // 5. Space replacing selection
+    doc.cursor = (0, 2);
+    doc.selection_anchor = Some((0, 6));
+    assert!(doc.has_selection());
+    doc.insert_char_smart(' ');
+    assert!(!doc.has_selection());
+    assert_eq!(doc.buffer.get_line(0).as_deref(), Some("   lo "));
+
+    // 6. Undo/Redo space insertions
+    doc.undo();
+    assert_eq!(doc.buffer.get_line(0).as_deref(), Some("  He llo "));
+    doc.redo();
+    assert_eq!(doc.buffer.get_line(0).as_deref(), Some("   lo "));
+}
+
+// INFO: Verifies terminal in-line editing (DCH, ICH, ECH, line editing without trailing corruption).
+#[test]
+fn test_terminal_inline_editing_escape_sequences() {
+    let mut grid = TerminalGrid::new(24, 80);
+    let mut parser = TerminalParser::new();
+
+    // 1. Simulate pasted command: git checkout feature/editor-fixes
+    let cmd = b"$ git checkout feature/editor-fixes";
+    parser.advance(&mut grid, cmd);
+    {
+        let lines = grid.visible_lines();
+        let line_chars: String = lines[0].iter().map(|c| c.ch).collect();
+        assert!(line_chars.starts_with("$ git checkout feature/editor-fixes"));
+    }
+
+    // 2. Cursor moved 21 columns left to after 't' of checkout (from col 35 to col 14)
+    let (row, col) = grid.cursor();
+    assert_eq!(row, 0);
+    assert_eq!(col, 35);
+    parser.advance(&mut grid, b"\x1b[21D");
+    assert_eq!(grid.cursor(), (0, 14));
+
+    // 3. Send 3 Backspaces with DCH: \x08\x1b[1P 3 times (deleting 'out')
+    // Readline deletes characters in the middle using backspace and DCH (\x1b[1P)
+    parser.advance(&mut grid, b"\x08\x1b[1P\x08\x1b[1P\x08\x1b[1P");
+    assert_eq!(grid.cursor(), (0, 11));
+    {
+        let lines = grid.visible_lines();
+        let line_chars: String = lines[0].iter().map(|c| c.ch).collect();
+        // The command must now read '$ git check feature/editor-fixes'
+        // and crucially MUST NOT have stale 'out' or duplicate 'sssss' at the end!
+        assert!(line_chars.starts_with("$ git check feature/editor-fixes"));
+        let remainder = &line_chars["$ git check feature/editor-fixes".len()..];
+        assert!(remainder.chars().all(|c| c == ' ' || c == '\0'));
+    }
+
+    // 4. Test ICH (Insert Character: \x1b[1@)
+    // Cursor at 11 (' ' after check). Insert 1 blank and write '-'
+    parser.advance(&mut grid, b"\x1b[1@-");
+    {
+        let lines = grid.visible_lines();
+        let line_chars: String = lines[0].iter().map(|c| c.ch).collect();
+        assert!(line_chars.starts_with("$ git check- feature/editor-fixes"));
+    }
+
+    // 5. Test ECH (Erase Character: \x1b[1X)
+    // Erase the '-' just typed without moving cursor
+    parser.advance(&mut grid, b"\x1b[1D\x1b[1X");
+    {
+        let lines = grid.visible_lines();
+        let line_chars: String = lines[0].iter().map(|c| c.ch).collect();
+        assert!(line_chars.starts_with("$ git check  feature/editor-fixes"));
+    }
+
+    // 7. Test Cursor Save and Restore (\x1b[s / \x1b[u and \x1b7 / \x1b8)
+    parser.advance(&mut grid, b"\x1b[5;20H\x1b[s\x1b[1;1H\x1b[u");
+    assert_eq!(grid.cursor(), (4, 19));
+    parser.advance(&mut grid, b"\x1b[2;10H\x1b7\x1b[1;1H\x1b8");
+    assert_eq!(grid.cursor(), (1, 9));
+}
+
+#[test]
+fn test_deleted_files_rendering_and_diff_status() {
+    use akssora_editor::Document;
+    use akssora_git::{DiffHunk, DiffLine, DiffLineType, FileDiff, FileGitStatus, LineGitChange};
+    use std::path::PathBuf;
+
+    // 1. Deleted file with original content parsed from diff hunks
+    let hunk = DiffHunk {
+        old_start: 1,
+        old_lines: 3,
+        new_start: 0,
+        new_lines: 0,
+        header: "@@ -1,3 +0,0 @@".to_string(),
+        lines: vec![
+            DiffLine {
+                line_type: DiffLineType::Delete,
+                content: "fn calculate() -> i32 {\n".to_string(),
+                old_line_num: Some(1),
+                new_line_num: None,
+            },
+            DiffLine {
+                line_type: DiffLineType::Delete,
+                content: "    42\n".to_string(),
+                old_line_num: Some(2),
+                new_line_num: None,
+            },
+            DiffLine {
+                line_type: DiffLineType::Delete,
+                content: "}\n".to_string(),
+                old_line_num: Some(3),
+                new_line_num: None,
+            },
+        ],
+    };
+
+    let file_diff = FileDiff {
+        path: PathBuf::from("src/calc.rs"),
+        old_path: None,
+        status: FileGitStatus::Deleted,
+        additions: 0,
+        deletions: 3,
+        is_binary: false,
+        line_count: 3,
+        hunks: vec![hunk],
+    };
+
+    let retrieved_content = file_diff.deleted_content().expect("content must be parsed");
+    assert_eq!(retrieved_content, "fn calculate() -> i32 {\n    42\n}\n");
+
+    // 2. Open document with retrieved content and mark as deleted
+    let mut doc = Document::open(PathBuf::from("src/calc.rs"), &retrieved_content);
+    assert!(!doc.is_deleted);
+    doc.set_deleted(true);
+    assert!(doc.is_deleted);
+    assert_eq!(doc.buffer.line_count(), 4);
+
+    // 3. Document git line statuses must all be LineGitChange::Deleted
+    let statuses = doc.git_line_statuses();
+    assert_eq!(statuses.len(), 4);
+    for status in statuses.iter() {
+        assert_eq!(status.change, Some(LineGitChange::Deleted));
+    }
+
+    // 4. Distinguish between genuinely empty deleted file vs deleted file with content
+    let empty_file_diff = FileDiff {
+        path: PathBuf::from("empty.txt"),
+        old_path: None,
+        status: FileGitStatus::Deleted,
+        additions: 0,
+        deletions: 0,
+        is_binary: false,
+        line_count: 0,
+        hunks: vec![],
+    };
+    let empty_content = empty_file_diff.deleted_content().unwrap_or_default();
+    assert_eq!(empty_content, "");
+
+    // 5. Explicit error reporting when content cannot be retrieved
+    let missing_path = PathBuf::from("/non/existent/repo/root/file.rs");
+    let err_res = akssora_git::GitInspector::file_deleted_content(
+        std::path::Path::new("/non/existent/repo/root"),
+        &missing_path,
+        None,
+    );
+    assert!(err_res.is_err());
+    let err_msg = err_res.unwrap_err();
+    assert!(err_msg.contains("Git error") || err_msg.contains("cannot be retrieved"));
+}
+
+#[test]
+fn test_code_review_accordion_natural_scrolling_and_caching() {
+    use akssora_git::{DiffHunk, DiffLine, DiffLineType, FileDiff, FileGitStatus, RepoDiff};
+    use akssora_terminal_ui::{CodeReviewLayout, CodeReviewModel};
+    use std::path::PathBuf;
+
+    let mut model = CodeReviewModel::default();
+    model.diff = RepoDiff {
+        files: vec![
+            FileDiff {
+                path: PathBuf::from("short.rs"),
+                old_path: None,
+                status: FileGitStatus::Modified,
+                additions: 2,
+                deletions: 1,
+                is_binary: false,
+                line_count: 5,
+                hunks: vec![DiffHunk {
+                    old_start: 1,
+                    old_lines: 1,
+                    new_start: 1,
+                    new_lines: 2,
+                    header: "@@ -1,1 +1,2 @@".to_string(),
+                    lines: vec![
+                        DiffLine {
+                            line_type: DiffLineType::Delete,
+                            content: "old line\n".to_string(),
+                            old_line_num: Some(1),
+                            new_line_num: None,
+                        },
+                        DiffLine {
+                            line_type: DiffLineType::Add,
+                            content: "new line 1\n".to_string(),
+                            old_line_num: None,
+                            new_line_num: Some(1),
+                        },
+                        DiffLine {
+                            line_type: DiffLineType::Add,
+                            content: "new line 2\n".to_string(),
+                            old_line_num: None,
+                            new_line_num: Some(2),
+                        },
+                    ],
+                }],
+            },
+            FileDiff {
+                path: PathBuf::from("long.rs"),
+                old_path: None,
+                status: FileGitStatus::Modified,
+                additions: 100,
+                deletions: 50,
+                is_binary: false,
+                line_count: 150,
+                hunks: vec![],
+            },
+        ],
+        files_changed: 2,
+        total_additions: 102,
+        total_deletions: 51,
+    };
+
+    let viewport_h = 800.0;
+
+    // 1. Natural content-sized accordion heights
+    let short_h = CodeReviewLayout::card_height_for_file_state(
+        &model.diff.files[0],
+        false,
+        false,
+        viewport_h,
+    );
+    let expected_short_h = CodeReviewLayout::CARD_HEADER_HEIGHT
+        + CodeReviewLayout::UNMODIFIED_LINES_HEIGHT
+        + (3.0 * CodeReviewLayout::DIFF_LINE_HEIGHT + 16.0);
+    assert_eq!(short_h, expected_short_h);
+    // Short file diff height must not artificially expand to fill viewport
+    assert!(short_h < 200.0);
+    assert!(short_h < viewport_h);
+
+    // Full file view height matches file line count
+    let full_h = CodeReviewLayout::card_height_for_file_state_ex(
+        &model.diff.files[0],
+        false,
+        false,
+        true,
+        viewport_h,
+    );
+    let expected_full_h =
+        CodeReviewLayout::CARD_HEADER_HEIGHT + (5.0 * CodeReviewLayout::DIFF_LINE_HEIGHT + 16.0);
+    assert_eq!(full_h, expected_full_h);
+
+    let long_h = CodeReviewLayout::card_height_for_file_state(
+        &model.diff.files[1],
+        false,
+        false,
+        viewport_h,
+    );
+    assert!(long_h > 1000.0);
+
+    // 2. Total diff content height calculation
+    let total_h1 = model.total_diff_content_height(viewport_h);
+    assert_eq!(
+        total_h1,
+        12.0 + short_h
+            + CodeReviewLayout::CARD_MARGIN_BOTTOM
+            + long_h
+            + CodeReviewLayout::CARD_MARGIN_BOTTOM
+    );
+    let total_h2 = model.total_diff_content_height(viewport_h);
+    assert_eq!(total_h1, total_h2);
+
+    // 3. Tree items caching
+    let items1 = model.visible_tree_items();
+    assert_eq!(items1.len(), 2);
+    let items2 = model.visible_tree_items();
+    assert_eq!(items1, items2);
+
+    // 4. Invalidation on collapsing an accordion
+    // An expanded accordion must always be collapsible via toggle:
+    model.toggle_file_collapsed(&PathBuf::from("short.rs"));
+    assert!(
+        model.is_file_collapsed(&PathBuf::from("short.rs")),
+        "An expanded accordion must always be collapsible"
+    );
+
+    // Programmatically set collapsed state to test layout recomputation:
+    model.set_file_collapsed(&PathBuf::from("short.rs"), true);
+    assert!(model.is_file_collapsed(&PathBuf::from("short.rs")));
+
+    // Recomputed height after collapse uses CARD_HEADER_HEIGHT for short.rs
+    let collapsed_short_h = CodeReviewLayout::CARD_HEADER_HEIGHT;
+    let total_h_collapsed = model.total_diff_content_height(viewport_h);
+    assert_eq!(
+        total_h_collapsed,
+        12.0 + collapsed_short_h
+            + CodeReviewLayout::CARD_MARGIN_BOTTOM
+            + long_h
+            + CodeReviewLayout::CARD_MARGIN_BOTTOM
+    );
+
+    // 5. Sticky header within accordion boundaries while code scrolls:
+    let vy = 42.0;
+    let header_y = CodeReviewLayout::card_header_y(vy - 50.0, long_h, false, vy);
+    assert_eq!(header_y, vy);
+    let collapsed_header_y = CodeReviewLayout::card_header_y(vy - 50.0, long_h, true, vy);
+    assert_eq!(collapsed_header_y, vy - 50.0);
+}
+
+#[test]
+fn test_strict_per_line_git_actions_and_commit_button() {
+    use akssora_editor::{Document, GutterActionKind};
+    use akssora_git::LineGitChange;
+    use akssora_terminal_ui::CodeReviewLayout;
+    use std::path::PathBuf;
+
+    // 1. Commit button visibility: Ensure width cleanly accommodates "Commit" text
+    let (_cx, _cy, cw, ch) = CodeReviewLayout::commit_btn_rect(0.0, 0.0, 800.0);
+    assert!(cw >= 50.0);
+    assert!(ch >= 20.0);
+    let commit_text = "Commit";
+    let approx_tw = commit_text.len() as f32 * 8.5;
+    assert!(
+        cw > approx_tw + 8.0,
+        "Button width must fully fit 'Commit' text without clipping"
+    );
+
+    // 2. Setup document with Git baseline for line-level actions
+    let mut doc = Document::open(
+        PathBuf::from("/tmp/test_git_actions.rs"),
+        "line 1\nline 2_mod\nline 3_added\nline 4",
+    );
+    doc.line_numbers = true;
+    doc.line_number_mode = akssora_terminal_config::LineNumberMode::Absolute;
+    doc.set_git_original_content(Some("line 1\nline 2\nline 4".to_string()));
+
+    let statuses = doc.git_line_statuses();
+    assert_eq!(statuses.len(), 4);
+    assert_eq!(statuses[0].change, None);
+    assert_eq!(statuses[1].change, Some(LineGitChange::Modified));
+    assert_eq!(statuses[1].original_line.as_deref(), Some("line 2"));
+    assert_eq!(statuses[2].change, Some(LineGitChange::Added));
+    assert_eq!(statuses[3].change, None);
+
+    // 3. Hover hit-testing:
+    // Gutter width is 48.0. Line height is ~18.0.
+    // Line 1 is modified (vis_row = 1, line_y = 18.0)
+    let cell_w = 9.0;
+    let cell_h = 18.0;
+    let content_x = 0.0;
+    let content_y = 0.0;
+    let content_w = 500.0;
+
+    // 3a. Hovering over line number text area (e.g. x = 10.0, y = 25.0) reveals buttons without clicking
+    let hover_num =
+        doc.hit_test_gutter_hover(10.0, 25.0, content_x, content_y, content_w, cell_w, cell_h);
+    assert_eq!(hover_num, Some((1, None)));
+
+    // Clicking line number text area does NOT trigger a git action
+    let click_num =
+        doc.hit_test_gutter_click(10.0, 25.0, content_x, content_y, content_w, cell_w, cell_h);
+    assert_eq!(click_num, None);
+
+    // 3b. Hovering over "+" (Add This Line) button at x = content_x + 48.0 - 25.0 = 23.0, y = 25.0
+    let hover_add =
+        doc.hit_test_gutter_hover(23.0, 25.0, content_x, content_y, content_w, cell_w, cell_h);
+    assert_eq!(hover_add, Some((1, Some(GutterActionKind::StageLine))));
+
+    // Clicking "+" button triggers StageLine
+    let click_add =
+        doc.hit_test_gutter_click(23.0, 25.0, content_x, content_y, content_w, cell_w, cell_h);
+    assert_eq!(click_add, Some((1, GutterActionKind::StageLine)));
+
+    // 3c. Hovering over "↶" (Revert This Line) button at x = content_x + 48.0 - 10.0 = 38.0, y = 25.0
+    let hover_rev =
+        doc.hit_test_gutter_hover(38.0, 25.0, content_x, content_y, content_w, cell_w, cell_h);
+    assert_eq!(hover_rev, Some((1, Some(GutterActionKind::RevertLine))));
+
+    // Clicking "↶" button triggers RevertLine
+    let click_rev =
+        doc.hit_test_gutter_click(38.0, 25.0, content_x, content_y, content_w, cell_w, cell_h);
+    assert_eq!(click_rev, Some((1, GutterActionKind::RevertLine)));
+
+    // 4. Strict Single-Line Revert: Modified Line
+    // Line 1 was "line 2_mod". Reverting line 1 must restore "line 2" while leaving line 3_added untouched!
+    assert!(doc.revert_line_at(1).is_ok());
+    assert_eq!(
+        doc.buffer.to_string_content(),
+        "line 1\nline 2\nline 3_added\nline 4"
+    );
+
+    // 5. Strict Single-Line Revert: Added Line
+    // Now line 2 is "line 3_added". Reverting line 2 must remove it without touching line 1, 2, or 4!
+    assert!(doc.revert_line_at(2).is_ok());
+    assert_eq!(doc.buffer.to_string_content(), "line 1\nline 2\nline 4");
+
+    // 6. Strict Single-Line Revert: Deleted Line
+    // Setup document where "line 3" is deleted between line 2 and line 4
+    let mut doc_del = Document::open(
+        PathBuf::from("/tmp/test_git_del.rs"),
+        "line 1\nline 2\nline 4",
+    );
+    doc_del.line_numbers = true;
+    doc_del.set_git_original_content(Some("line 1\nline 2\nline 3\nline 4".to_string()));
+    let del_statuses = doc_del.git_line_statuses();
+    assert_eq!(del_statuses.len(), 3);
+    assert!(del_statuses[2].deleted_above);
+    assert_eq!(del_statuses[2].deleted_lines, vec!["line 3".to_string()]);
+
+    // Revert the deletion on line 2 (which restores deleted lines above it)
+    assert!(doc_del.revert_line_at(2).is_ok());
+    assert_eq!(
+        doc_del.buffer.to_string_content(),
+        "line 1\nline 2\nline 3\nline 4"
+    );
+}
+
+#[test]
+fn test_code_review_accordion_collapse_trigger_retention_and_large_diff_handling() {
+    use akssora_git::{DiffHunk, DiffLine, DiffLineType, FileDiff, FileGitStatus, RepoDiff};
+    use akssora_terminal_ui::{CodeReviewLayout, CodeReviewModel};
+    use std::path::PathBuf;
+
+    // 1. Setup a repository diff with a small file and a huge 45,000+ line file
+    let file_small = FileDiff {
+        path: PathBuf::from("small.rs"),
+        old_path: None,
+        status: FileGitStatus::Modified,
+        hunks: vec![DiffHunk {
+            old_start: 1,
+            old_lines: 2,
+            new_start: 1,
+            new_lines: 2,
+            header: "@@ -1,2 +1,2 @@".to_string(),
+            lines: vec![
+                DiffLine {
+                    line_type: DiffLineType::Context,
+                    content: "fn small() {".to_string(),
+                    old_line_num: Some(1),
+                    new_line_num: Some(1),
+                },
+                DiffLine {
+                    line_type: DiffLineType::Add,
+                    content: "    println!(\"small\");".to_string(),
+                    old_line_num: None,
+                    new_line_num: Some(2),
+                },
+            ],
+        }],
+        additions: 1,
+        deletions: 0,
+        is_binary: false,
+        line_count: 60,
+    };
+
+    let file_large = FileDiff {
+        path: PathBuf::from("large_45000.rs"),
+        old_path: None,
+        status: FileGitStatus::Added,
+        hunks: vec![DiffHunk {
+            old_start: 0,
+            old_lines: 0,
+            new_start: 1,
+            new_lines: 45000,
+            header: "@@ -0,0 +1,45000 @@".to_string(),
+            lines: vec![],
+        }],
+        additions: 45000,
+        deletions: 0,
+        is_binary: false,
+        line_count: 45000,
+    };
+
+    let file_after = FileDiff {
+        path: PathBuf::from("after.rs"),
+        old_path: None,
+        status: FileGitStatus::Modified,
+        hunks: vec![],
+        additions: 100,
+        deletions: 0,
+        is_binary: false,
+        line_count: 100,
+    };
+
+    let repo_diff = RepoDiff {
+        files: vec![file_small, file_large, file_after],
+        total_additions: 45101,
+        total_deletions: 0,
+        files_changed: 3,
+    };
+
+    let mut model = CodeReviewModel::new(std::path::Path::new("/mock/repo"));
+    model.diff = repo_diff;
+
+    let viewport_h = 800.0;
+    let vy = 40.0;
+
+    // Verify fast height calculation without freezing
+    let total_h = model.total_diff_content_height(viewport_h);
+    assert!(total_h > 45000.0 * 20.0);
+
+    // 2. Stable Accordion Positioning Test:
+    // User scrolls down into the 45,000 line file; header moves naturally without snapping to vy
+    let offset_large = model.card_y_offset_for_file(1, viewport_h);
+    model.diff_scroll_y = offset_large + 300.0;
+
+    let curr_y_before = vy + offset_large - model.diff_scroll_y;
+    let card_h_before = CodeReviewLayout::card_height_for_file_state(
+        &model.diff.files[1],
+        false,
+        false,
+        viewport_h,
+    );
+    let header_y_before = CodeReviewLayout::card_header_y(curr_y_before, card_h_before, false, vy);
+    assert_eq!(
+        header_y_before, vy,
+        "Header must stay sticky at vy within accordion boundaries"
+    );
+
+    // Now user collapses file 1 ("large_45000.rs")
+    model.set_file_collapsed(&PathBuf::from("large_45000.rs"), true);
+    assert!(model.is_file_collapsed(&PathBuf::from("large_45000.rs")));
+
+    // When closing, content closes and layout reflows naturally without jumping
+    let max_scroll = model.max_diff_scroll(viewport_h);
+    model.diff_scroll_y = model.diff_scroll_y.clamp(0.0, max_scroll);
+
+    // 3. Test natural accordion scrolling and context expansion
+    let offset_small = model.card_y_offset_for_file(0, viewport_h);
+    model.diff_scroll_y = 0.0;
+    let curr_y_small = vy + offset_small - model.diff_scroll_y;
+    let card_h_small = CodeReviewLayout::card_height_for_file_state(
+        &model.diff.files[0],
+        false,
+        false,
+        viewport_h,
+    );
+    let header_y_small = CodeReviewLayout::card_header_y(curr_y_small, card_h_small, false, vy);
+    assert_eq!(header_y_small, curr_y_small);
+
+    // Collapse small file: layout reflows without viewport jumping
+    model.set_file_collapsed(&PathBuf::from("small.rs"), true);
+    let max_scroll_small = model.max_diff_scroll(viewport_h);
+    model.diff_scroll_y = model.diff_scroll_y.clamp(0.0, max_scroll_small);
+    assert_eq!(model.diff_scroll_y, 0.0);
+}
+
+#[test]
+fn test_git_diff_retrieval_background_worker_architecture_pipeline() {
+    use akssora_git::{
+        DiffHunk, DiffLine, DiffLineType, FileDiff, FileGitStatus, IndexedRepoDiff, RepoDiff,
+    };
+    use akssora_terminal_app::app::review::worker::{DiffBackgroundWorker, DiffWorkerRequest};
+    use akssora_terminal_ui::CodeReviewModel;
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+
+    // 1. Setup mock repository files and verify Rayon parallel preprocessing into IndexedRepoDiff
+    let mut files = Vec::new();
+    for i in 0..10 {
+        files.push(FileDiff {
+            path: PathBuf::from(format!("src/file_{i}.rs")),
+            old_path: None,
+            status: FileGitStatus::Modified,
+            hunks: vec![DiffHunk {
+                old_start: 1,
+                old_lines: 5,
+                new_start: 1,
+                new_lines: 5,
+                header: format!("@@ -1,5 +1,5 @@ file {i}"),
+                lines: vec![
+                    DiffLine {
+                        line_type: DiffLineType::Context,
+                        content: "line 1".to_string(),
+                        old_line_num: Some(1),
+                        new_line_num: Some(1),
+                    },
+                    DiffLine {
+                        line_type: DiffLineType::Add,
+                        content: format!("added line in file {i}"),
+                        old_line_num: None,
+                        new_line_num: Some(2),
+                    },
+                ],
+            }],
+            additions: 1,
+            deletions: 0,
+            is_binary: false,
+            line_count: 5,
+        });
+    }
+
+    let repo_diff = RepoDiff {
+        files,
+        total_additions: 10,
+        total_deletions: 0,
+        files_changed: 10,
+    };
+
+    // Step D: Rayon parallel preprocessing -> Step E: Indexed immutable diff model
+    let indexed_diff = Arc::new(IndexedRepoDiff::from_repo_diff(repo_diff));
+    assert_eq!(indexed_diff.indexed_files.len(), 10);
+    assert_eq!(indexed_diff.files_by_path.len(), 10);
+
+    // Step F: UI thread updates CodeReviewModel
+    let mut model = CodeReviewModel::new(Path::new("/mock/repo"));
+    model.set_indexed_diff(indexed_diff.clone(), 1);
+    assert_eq!(model.diff_generation, 1);
+    assert_eq!(model.diff.files.len(), 10);
+    assert!(!model.is_loading);
+
+    // Step G & H: Virtualized renderer calculates visible lines + small buffer
+    let (file, indexed_file) = indexed_diff
+        .file_by_path(Path::new("src/file_3.rs"))
+        .expect("file_3 must be found");
+    assert_eq!(file.path, PathBuf::from("src/file_3.rs"));
+    assert_eq!(indexed_file.total_visual_lines, 3); // 1 header line + 2 diff lines
+
+    // Step B: Background worker lifecycle verification
+    let worker = DiffBackgroundWorker::new();
+    worker.send_request(DiffWorkerRequest {
+        generation: 2,
+        repo_root: PathBuf::from("."),
+        staged: false,
+    });
+
+    // Wait briefly for background worker response
+    let start = std::time::Instant::now();
+    let mut received = false;
+    while start.elapsed() < std::time::Duration::from_secs(3) {
+        if let Some(resp) = worker.try_recv_response() {
+            assert_eq!(resp.generation, 2);
+            assert!(!resp.staged);
+            model.set_indexed_diff(resp.diff, resp.generation);
+            assert_eq!(model.diff_generation, 2);
+            received = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        received,
+        "Background worker must deliver response to UI thread"
+    );
+
+    // Step J & K: Invalidate affected data
+    model.invalidate_layout();
+    assert!(model.total_diff_content_height(800.0) > 0.0);
+}
+
+#[test]
+fn test_stable_accordion_scrolling_and_natural_layout() {
+    use akssora_git::{DiffHunk, DiffLine, DiffLineType, FileDiff, FileGitStatus, RepoDiff};
+    use akssora_terminal_ui::{CodeReviewAction, CodeReviewLayout, CodeReviewModel};
+    use std::path::PathBuf;
+
+    // Create a multi-file diff scenario: File 0 (short diff), File 1 (medium diff), File 2 (short diff)
+    let repo_diff = RepoDiff {
+        files: vec![
+            FileDiff {
+                path: PathBuf::from("file_a.rs"),
+                old_path: None,
+                status: FileGitStatus::Modified,
+                additions: 2,
+                deletions: 1,
+                is_binary: false,
+                line_count: 5,
+                hunks: vec![DiffHunk {
+                    old_start: 1,
+                    old_lines: 2,
+                    new_start: 1,
+                    new_lines: 3,
+                    header: "@@ -1,2 +1,3 @@".to_string(),
+                    lines: vec![
+                        DiffLine {
+                            line_type: DiffLineType::Delete,
+                            content: "- old\n".to_string(),
+                            old_line_num: Some(1),
+                            new_line_num: None,
+                        },
+                        DiffLine {
+                            line_type: DiffLineType::Add,
+                            content: "+ new1\n".to_string(),
+                            old_line_num: None,
+                            new_line_num: Some(1),
+                        },
+                        DiffLine {
+                            line_type: DiffLineType::Add,
+                            content: "+ new2\n".to_string(),
+                            old_line_num: None,
+                            new_line_num: Some(2),
+                        },
+                    ],
+                }],
+            },
+            FileDiff {
+                path: PathBuf::from("file_b.rs"),
+                old_path: None,
+                status: FileGitStatus::Modified,
+                additions: 10,
+                deletions: 10,
+                is_binary: false,
+                line_count: 20,
+                hunks: vec![DiffHunk {
+                    old_start: 10,
+                    old_lines: 5,
+                    new_start: 10,
+                    new_lines: 5,
+                    header: "@@ -10,5 +10,5 @@".to_string(),
+                    lines: vec![
+                        DiffLine {
+                            line_type: DiffLineType::Context,
+                            content: "  ctx\n".to_string(),
+                            old_line_num: Some(10),
+                            new_line_num: Some(10),
+                        },
+                        DiffLine {
+                            line_type: DiffLineType::Add,
+                            content: "+ add\n".to_string(),
+                            old_line_num: None,
+                            new_line_num: Some(11),
+                        },
+                    ],
+                }],
+            },
+            FileDiff {
+                path: PathBuf::from("file_c.rs"),
+                old_path: None,
+                status: FileGitStatus::Modified,
+                additions: 1,
+                deletions: 1,
+                is_binary: false,
+                line_count: 3,
+                hunks: vec![],
+            },
+        ],
+        files_changed: 3,
+        total_additions: 13,
+        total_deletions: 12,
+    };
+
+    let mut model = CodeReviewModel::default();
+    model.diff = repo_diff;
+
+    let viewport_h = 600.0;
+    let vy = 42.0;
+
+    // 1. Verify individual accordion heights are calculated independently
+    let h0 = CodeReviewLayout::card_height_for_file_state(
+        &model.diff.files[0],
+        false,
+        false,
+        viewport_h,
+    );
+    let h1 = CodeReviewLayout::card_height_for_file_state(
+        &model.diff.files[1],
+        false,
+        false,
+        viewport_h,
+    );
+    let h2 = CodeReviewLayout::card_height_for_file_state(
+        &model.diff.files[2],
+        false,
+        false,
+        viewport_h,
+    );
+
+    assert!(h0 > CodeReviewLayout::CARD_HEADER_HEIGHT);
+    assert!(h1 > CodeReviewLayout::CARD_HEADER_HEIGHT);
+    assert!(h2 > CodeReviewLayout::CARD_HEADER_HEIGHT);
+
+    // Accordions maintain strict ordered positions:
+    let offset0 = model.card_y_offset_for_file(0, viewport_h);
+    let offset1 = model.card_y_offset_for_file(1, viewport_h);
+    let offset2 = model.card_y_offset_for_file(2, viewport_h);
+
+    assert_eq!(offset0, 12.0);
+    assert_eq!(offset1, 12.0 + h0 + CodeReviewLayout::CARD_MARGIN_BOTTOM);
+    assert_eq!(offset2, offset1 + h1 + CodeReviewLayout::CARD_MARGIN_BOTTOM);
+
+    // 2. Continuous natural vertical scrolling:
+    // When scrolling down, card 0 moves upwards, card 1 enters viewport naturally
+    // Neither header snaps to vy, nor displaces earlier accordions
+    model.diff_scroll_y = 50.0;
+    let card0_y = vy + offset0 - model.diff_scroll_y;
+    let card1_y = vy + offset1 - model.diff_scroll_y;
+
+    let header0_y = CodeReviewLayout::card_header_y(card0_y, h0, false, vy);
+    let header1_y = CodeReviewLayout::card_header_y(card1_y, h1, false, vy);
+
+    assert_eq!(
+        header0_y, vy,
+        "Header 0 must stay sticky at vy within card 0 boundaries"
+    );
+    assert_eq!(
+        header1_y, card1_y,
+        "Header 1 must scroll naturally with card 1"
+    );
+    assert_eq!(card1_y - card0_y, h0 + CodeReviewLayout::CARD_MARGIN_BOTTOM);
+
+    // 3. Collapsing does not displace unrelated accordions or jump parent scroll
+    model.set_file_collapsed(&PathBuf::from("file_b.rs"), true);
+    assert!(model.is_file_collapsed(&PathBuf::from("file_b.rs")));
+
+    let max_scroll = model.max_diff_scroll(viewport_h);
+    model.diff_scroll_y = model.diff_scroll_y.clamp(0.0, max_scroll);
+    // Relative distance between card 0 and card 1 is unchanged
+    assert_eq!(model.card_y_offset_for_file(1, viewport_h), offset1);
+
+    // 4. Hit test editor inside card body (routes directly to the editor in editing mode with Git effects)
+    let curr_card0_y = vy + offset0 - model.diff_scroll_y;
+    let click_y_0 = curr_card0_y + CodeReviewLayout::CARD_HEADER_HEIGHT + 10.0;
+    let action_0 = CodeReviewLayout::hit_test(&model, 0.0, 0.0, 800.0, 600.0, 300.0, click_y_0);
+    assert!(matches!(
+        action_0,
+        Some(CodeReviewAction::ClickEditor { orig_idx: 0, .. })
+    ));
+
+    // Uncollapse file_b.rs: clicking its body routes to ClickEditor for file 1
+    model.set_file_collapsed(&PathBuf::from("file_b.rs"), false);
+    assert!(!model.is_file_collapsed(&PathBuf::from("file_b.rs")));
+    let curr_card1_y = vy + offset1 - model.diff_scroll_y;
+    let click_y_1 = curr_card1_y + CodeReviewLayout::CARD_HEADER_HEIGHT + 10.0;
+    let action_1 = CodeReviewLayout::hit_test(&model, 0.0, 0.0, 800.0, 600.0, 300.0, click_y_1);
+    assert!(matches!(
+        action_1,
+        Some(CodeReviewAction::ClickEditor { orig_idx: 1, .. })
+    ));
+}
+
+#[test]
+fn test_code_review_accordion_editor_mode_and_sticky_header() {
+    use akssora_editor::Document;
+    use akssora_git::{FileDiff, FileGitStatus, LineGitChange, RepoDiff};
+    use akssora_terminal_ui::{CodeReviewLayout, CodeReviewModel};
+    use std::path::PathBuf;
+
+    let repo_dir =
+        std::env::temp_dir().join(format!("akssora_review_editor_test_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&repo_dir);
+
+    let mut model = CodeReviewModel::new(&repo_dir);
+
+    // 1. Setup a modified file and a deleted file
+    let file1_path = PathBuf::from("src/main.rs");
+    let full_path1 = repo_dir.join(&file1_path);
+    let _ = std::fs::create_dir_all(full_path1.parent().unwrap());
+    let _ = std::fs::write(&full_path1, "fn main() {\n    println!(\"hello\");\n}\n");
+
+    let file2_path = PathBuf::from("src/deleted.rs");
+    let full_path2 = repo_dir.join(&file2_path);
+
+    let file1 = FileDiff {
+        path: file1_path.clone(),
+        old_path: None,
+        is_binary: false,
+        status: FileGitStatus::Modified,
+        additions: 1,
+        deletions: 1,
+        line_count: 3,
+        hunks: Vec::new(),
+    };
+    let file2 = FileDiff {
+        path: file2_path.clone(),
+        old_path: None,
+        is_binary: false,
+        status: FileGitStatus::Deleted,
+        additions: 0,
+        deletions: 2,
+        line_count: 2,
+        hunks: Vec::new(),
+    };
+
+    model.diff = RepoDiff {
+        files: vec![file1, file2],
+        total_additions: 1,
+        total_deletions: 3,
+        files_changed: 2,
+    };
+
+    // 2. Editor documents preparation:
+    let mut doc1 = Document::open(
+        full_path1.clone(),
+        "fn main() {\n    println!(\"hello\");\n}\n",
+    );
+    doc1.inline_diff = true;
+    doc1.line_numbers = true;
+    doc1.line_number_mode = akssora_terminal_config::LineNumberMode::Absolute;
+    doc1.set_git_original_content(Some("fn main() {\n    println!(\"old\");\n}\n".to_string()));
+
+    let mut doc2 = Document::open(full_path2.clone(), "pub fn unused() {}\n");
+    doc2.inline_diff = true;
+    doc2.set_deleted(true);
+
+    assert!(doc1.inline_diff);
+    assert!(doc2.is_deleted);
+    doc2.ensure_git_statuses_computed();
+    let statuses2 = doc2.git_line_statuses();
+    assert_eq!(statuses2[0].change, Some(LineGitChange::Deleted));
+
+    // 3. Compact dynamic height based on content lines
+    let card1_h =
+        CodeReviewLayout::card_height_for_file_state(&model.diff.files[0], false, false, 800.0);
+    assert_eq!(
+        card1_h,
+        CodeReviewLayout::CARD_HEADER_HEIGHT + 3.0 * CodeReviewLayout::DIFF_LINE_HEIGHT + 16.0
+    );
+
+    // 4. Sticky header behavior:
+    let vy = 42.0;
+    // When card is scrolled past top:
+    let sticky_header_y = CodeReviewLayout::card_header_y(vy - 20.0, card1_h, false, vy);
+    assert_eq!(
+        sticky_header_y, vy,
+        "Header sticks to vy when scrolled past top"
+    );
+
+    // When card scrolls past bottom, header moves with card boundary:
+    let card_past_bottom = -200.0;
+    let header_at_end = CodeReviewLayout::card_header_y(card_past_bottom, card1_h, false, vy);
+    let expected_max = card_past_bottom + card1_h - CodeReviewLayout::CARD_HEADER_HEIGHT;
+    assert_eq!(header_at_end, expected_max);
+
+    // 5. Gutter hover hit testing on document (line 1 is the modified line)
+    let gutter_hover = doc1.hit_test_gutter_hover(10.0, 25.0, 0.0, 0.0, 500.0, 9.0, 18.0);
+    assert_eq!(gutter_hover.map(|(r, _)| r), Some(1));
+
+    let _ = std::fs::remove_dir_all(&repo_dir);
+}
+
+// INFO: Verifies that Code Review uses the actual editor with Git effects, and once code has expanded it cannot be collapsed.
+#[test]
+fn test_code_review_editor_mode_and_non_collapsing_expanded_code() {
+    use akssora_git::{DiffHunk, DiffLine, DiffLineType, FileDiff, FileGitStatus, RepoDiff};
+    use akssora_terminal_ui::{CodeReviewAction, CodeReviewLayout, CodeReviewModel};
+    use std::path::PathBuf;
+
+    let repo_dir =
+        std::env::temp_dir().join(format!("akssora_review_expand_test_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&repo_dir);
+
+    let mut model = CodeReviewModel::new(&repo_dir);
+    model.diff = RepoDiff {
+        files: vec![FileDiff {
+            path: PathBuf::from("src/app.rs"),
+            old_path: None,
+            status: FileGitStatus::Modified,
+            additions: 2,
+            deletions: 1,
+            is_binary: false,
+            line_count: 10,
+            hunks: vec![DiffHunk {
+                old_start: 1,
+                old_lines: 3,
+                new_start: 1,
+                new_lines: 4,
+                header: "@@ -1,3 +1,4 @@".to_string(),
+                lines: vec![
+                    DiffLine {
+                        line_type: DiffLineType::Context,
+                        content: "fn main() {\n".to_string(),
+                        old_line_num: Some(1),
+                        new_line_num: Some(1),
+                    },
+                    DiffLine {
+                        line_type: DiffLineType::Delete,
+                        content: "    println!(\"old\");\n".to_string(),
+                        old_line_num: Some(2),
+                        new_line_num: None,
+                    },
+                    DiffLine {
+                        line_type: DiffLineType::Add,
+                        content: "    println!(\"new\");\n".to_string(),
+                        old_line_num: None,
+                        new_line_num: Some(2),
+                    },
+                ],
+            }],
+        }],
+        files_changed: 1,
+        total_additions: 2,
+        total_deletions: 1,
+    };
+
+    let file_path = PathBuf::from("src/app.rs");
+
+    // 1. Files start expanded by default
+    assert!(!model.is_file_collapsed(&file_path));
+
+    // 2. An expanded accordion must always be collapsible
+    model.toggle_file_collapsed(&file_path);
+    assert!(
+        model.is_file_collapsed(&file_path),
+        "An expanded accordion must always be collapsible"
+    );
+    // Clicking again reopens it
+    model.toggle_file_collapsed(&file_path);
+    assert!(
+        !model.is_file_collapsed(&file_path),
+        "Clicking again reopens the accordion"
+    );
+
+    // 3. Header clicks on an accordion header toggle collapse
+    let (vx, vy, _vw, _vh) = CodeReviewLayout::diff_viewport_rect(&model, 0.0, 0.0, 800.0, 600.0);
+    let card_x = vx + 16.0;
+    let header_y = vy + 12.0;
+    // Click header title area (not an action button)
+    let header_action = CodeReviewLayout::hit_test(
+        &model,
+        0.0,
+        0.0,
+        800.0,
+        600.0,
+        card_x + 50.0,
+        header_y + 10.0,
+    );
+    assert_eq!(
+        header_action,
+        Some(CodeReviewAction::ToggleFileCollapse(0)),
+        "Clicking header toggles file collapse"
+    );
+
+    // 4. Body clicks route directly to the editor in editing mode
+    let body_click_y = header_y + CodeReviewLayout::CARD_HEADER_HEIGHT + 20.0;
+    let body_action =
+        CodeReviewLayout::hit_test(&model, 0.0, 0.0, 800.0, 600.0, card_x + 60.0, body_click_y);
+    assert!(
+        matches!(
+            body_action,
+            Some(CodeReviewAction::ClickEditor { orig_idx: 0, .. })
+        ),
+        "Clicking card body routes directly to the editor"
+    );
+
+    // 5. In App: ensure editor document has git effects enabled
+    let mut app = akssora_terminal_app::App::new();
+    app.code_review.repo_root = repo_dir.clone();
+    app.code_review.diff = model.diff.clone();
+    app.ensure_editor_document_for_diff_file(0);
+
+    let doc = app
+        .editor_documents
+        .get(&repo_dir.join(&file_path))
+        .expect("Editor document must exist");
+    assert!(
+        doc.inline_diff,
+        "Editor document must have inline_diff / git effects enabled"
+    );
+    assert!(
+        doc.line_numbers,
+        "Editor document must display line numbers"
+    );
+
+    let _ = std::fs::remove_dir_all(&repo_dir);
+}
+
+#[test]
+fn test_code_review_in_place_editing_and_keyboard_dispatch() {
+    use akssora_git::{DiffHunk, DiffLine, DiffLineType, FileDiff, FileGitStatus, RepoDiff};
+    use akssora_terminal_ui::{CodeReviewAction, CodeReviewLayout, CodeReviewModel, TabKind};
+    use std::path::PathBuf;
+
+    let repo_dir = std::env::temp_dir().join(format!(
+        "akssora_test_cr_edit_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&repo_dir).unwrap();
+    let file_path = PathBuf::from("main.rs");
+    let full_path = repo_dir.join(&file_path);
+    std::fs::write(
+        &full_path,
+        "fn main() {\n    let val = 10;\n    println!(\"{val}\");\n}\n",
+    )
+    .unwrap();
+
+    let mut model = CodeReviewModel::new(&repo_dir);
+    model.diff = RepoDiff {
+        files: vec![FileDiff {
+            path: file_path.clone(),
+            old_path: None,
+            status: FileGitStatus::Modified,
+            additions: 1,
+            deletions: 0,
+            line_count: 4,
+            is_binary: false,
+            hunks: vec![DiffHunk {
+                header: "@@ -1,4 +1,4 @@".to_string(),
+                old_start: 1,
+                old_lines: 4,
+                new_start: 1,
+                new_lines: 4,
+                lines: vec![
+                    DiffLine {
+                        line_type: DiffLineType::Context,
+                        content: "fn main() {\n".to_string(),
+                        old_line_num: Some(1),
+                        new_line_num: Some(1),
+                    },
+                    DiffLine {
+                        line_type: DiffLineType::Add,
+                        content: "    let val = 10;\n".to_string(),
+                        old_line_num: None,
+                        new_line_num: Some(2),
+                    },
+                    DiffLine {
+                        line_type: DiffLineType::Context,
+                        content: "    println!(\"{val}\");\n".to_string(),
+                        old_line_num: Some(3),
+                        new_line_num: Some(3),
+                    },
+                    DiffLine {
+                        line_type: DiffLineType::Context,
+                        content: "}\n".to_string(),
+                        old_line_num: Some(4),
+                        new_line_num: Some(4),
+                    },
+                ],
+            }],
+        }],
+        files_changed: 1,
+        total_additions: 1,
+        total_deletions: 0,
+    };
+
+    let mut app = akssora_terminal_app::App::new();
+    app.code_review = model;
+    let _ = app.tab_manager.add_tab(
+        "Review".to_string(),
+        TabKind::CodeReview {
+            repo_path: repo_dir.to_string_lossy().to_string(),
+        },
+    );
+
+    // 1. Ensure file is prepared for editing
+    app.prepare_code_review_editor_file(0);
+    assert_eq!(app.code_review.active_file_idx, Some(0));
+    assert_eq!(app.code_review.active_editing_file, Some(full_path.clone()));
+
+    // Cursor automatically points to first changed line (line 2, row index 1)
+    let doc = app.active_editor().expect("active editor document");
+    assert_eq!(doc.cursor.0, 1);
+
+    // 2. Click on line 2 in Code Review diff
+    let (vx, vy, _vw, _vh) =
+        CodeReviewLayout::diff_viewport_rect(&app.code_review, 0.0, 0.0, 800.0, 600.0);
+    let card_x = vx + 16.0;
+    let card_top = vy + 12.0;
+    // Line 1 is Context, Line 2 is Add.
+    // Line 2 Y position: card_top + CARD_HEADER_HEIGHT + 8.0 + UNMODIFIED_LINES_HEIGHT + 1 * DIFF_LINE_HEIGHT + 5.0
+    let line2_y = card_top
+        + CodeReviewLayout::CARD_HEADER_HEIGHT
+        + 8.0
+        + CodeReviewLayout::UNMODIFIED_LINES_HEIGHT
+        + CodeReviewLayout::DIFF_LINE_HEIGHT
+        + 5.0;
+    let click_x = card_x + 60.0;
+    let hit_action =
+        CodeReviewLayout::hit_test(&app.code_review, 0.0, 0.0, 800.0, 600.0, click_x, line2_y);
+    assert!(matches!(
+        hit_action,
+        Some(CodeReviewAction::ClickEditor { orig_idx: 0, .. })
+    ));
+
+    let handled = app.handle_code_review_click(click_x, line2_y, 800.0, 600.0, 0.0, 0.0);
+    assert!(handled);
+    assert_eq!(app.active_editor().unwrap().cursor.0, 1);
+
+    // 3. Edit document directly in Code Review panel
+    {
+        let doc = app.active_editor_mut().expect("active editor for editing");
+        doc.insert_char_smart('X');
+    }
+    let updated_line = app
+        .active_editor()
+        .unwrap()
+        .buffer
+        .get_line(1)
+        .unwrap()
+        .to_string();
+    assert!(
+        updated_line.contains('X'),
+        "Document buffer must contain edited character"
+    );
+
+    // 4. Verify active_editing_file remains focused and editing continues seamlessly
+    assert!(
+        app.code_review.active_editing_file.is_some(),
+        "Active editing file must remain active for editing"
+    );
+    assert_eq!(app.code_review.active_editing_file, Some(full_path));
+
+    let _ = std::fs::remove_dir_all(&repo_dir);
+}
+
+#[test]
+fn test_code_review_clicked_line_highlight_across_line_types() {
+    use akssora_git::{DiffHunk, DiffLine, DiffLineType, FileDiff, FileGitStatus, RepoDiff};
+    use akssora_terminal_ui::{CodeReviewLayout, CodeReviewModel, TabKind};
+    use std::path::PathBuf;
+
+    let repo_dir = std::env::temp_dir().join(format!(
+        "akssora_cr_highlight_test_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::create_dir_all(&repo_dir);
+    let file_path = PathBuf::from("src/lib.rs");
+    let full_path = repo_dir.join(&file_path);
+    let _ = std::fs::create_dir_all(full_path.parent().unwrap());
+    std::fs::write(&full_path, "fn first() {}\nfn added() {}\nfn last() {}\n").unwrap();
+
+    let mut model = CodeReviewModel::new(&repo_dir);
+    model.diff = RepoDiff {
+        files: vec![FileDiff {
+            path: file_path.clone(),
+            old_path: None,
+            status: FileGitStatus::Modified,
+            additions: 1,
+            deletions: 1,
+            line_count: 3,
+            is_binary: false,
+            hunks: vec![DiffHunk {
+                old_start: 1,
+                old_lines: 3,
+                new_start: 1,
+                new_lines: 3,
+                header: "@@ -1,3 +1,3 @@".to_string(),
+                lines: vec![
+                    DiffLine {
+                        line_type: DiffLineType::Context,
+                        content: "fn first() {}\n".to_string(),
+                        old_line_num: Some(1),
+                        new_line_num: Some(1),
+                    },
+                    DiffLine {
+                        line_type: DiffLineType::Delete,
+                        content: "fn old_deleted() {}\n".to_string(),
+                        old_line_num: Some(2),
+                        new_line_num: None,
+                    },
+                    DiffLine {
+                        line_type: DiffLineType::Add,
+                        content: "fn added() {}\n".to_string(),
+                        old_line_num: None,
+                        new_line_num: Some(2),
+                    },
+                    DiffLine {
+                        line_type: DiffLineType::Context,
+                        content: "fn last() {}\n".to_string(),
+                        old_line_num: Some(3),
+                        new_line_num: Some(3),
+                    },
+                ],
+            }],
+        }],
+        files_changed: 1,
+        total_additions: 1,
+        total_deletions: 1,
+    };
+
+    let mut app = akssora_terminal_app::App::new();
+    app.code_review = model;
+    let _ = app.tab_manager.add_tab(
+        "Review".to_string(),
+        TabKind::CodeReview {
+            repo_path: repo_dir.to_string_lossy().to_string(),
+        },
+    );
+
+    app.prepare_code_review_editor_file(0);
+    assert_eq!(app.code_review.active_file_idx, Some(0));
+    assert_eq!(app.code_review.active_editing_file, Some(full_path.clone()));
+
+    let (vx, vy, _vw, _vh) =
+        CodeReviewLayout::diff_viewport_rect(&app.code_review, 0.0, 0.0, 800.0, 600.0);
+    let card_x = vx + 16.0;
+    let card_top = vy + 12.0;
+    let click_x = card_x + 60.0;
+    let base_lines_y = card_top
+        + CodeReviewLayout::CARD_HEADER_HEIGHT
+        + 8.0
+        + CodeReviewLayout::UNMODIFIED_LINES_HEIGHT;
+
+    // 1. Click Context line (Line 1: fn first() {})
+    let line1_y = base_lines_y + 0.0 * CodeReviewLayout::DIFF_LINE_HEIGHT + 5.0;
+    let handled1 = app.handle_code_review_click(click_x, line1_y, 800.0, 600.0, 0.0, 0.0);
+    assert!(handled1, "Click on context line must be handled");
+    assert_eq!(
+        app.active_editor().unwrap().cursor.0,
+        0,
+        "Cursor must be on row 0 for context line 1"
+    );
+
+    // 2. Click Deleted line (Line 2: fn old_deleted() {})
+    let line2_del_y = base_lines_y + 1.0 * CodeReviewLayout::DIFF_LINE_HEIGHT + 5.0;
+    let handled2 = app.handle_code_review_click(click_x, line2_del_y, 800.0, 600.0, 0.0, 0.0);
+    assert!(handled2, "Click on deleted line must be handled");
+    assert_eq!(
+        app.active_editor().unwrap().cursor.0,
+        1,
+        "Cursor row targets deleted line's old row index"
+    );
+
+    // 3. Click Added line (Line 3: fn added() {})
+    let line3_add_y = base_lines_y + 2.0 * CodeReviewLayout::DIFF_LINE_HEIGHT + 5.0;
+    let handled3 = app.handle_code_review_click(click_x, line3_add_y, 800.0, 600.0, 0.0, 0.0);
+    assert!(handled3, "Click on added line must be handled");
+    assert_eq!(
+        app.active_editor().unwrap().cursor.0,
+        1,
+        "Cursor row targets added line's new row index"
+    );
+
+    // 4. Click second Context line (Line 4: fn last() {})
+    let line4_y = base_lines_y + 3.0 * CodeReviewLayout::DIFF_LINE_HEIGHT + 5.0;
+    let handled4 = app.handle_code_review_click(click_x, line4_y, 800.0, 600.0, 0.0, 0.0);
+    assert!(handled4, "Click on context line 4 must be handled");
+    assert_eq!(
+        app.active_editor().unwrap().cursor.0,
+        2,
+        "Cursor must be on row 2 for context line 4"
+    );
+
+    let _ = std::fs::remove_dir_all(&repo_dir);
+}
+
+#[test]
+fn test_code_review_hover_line_number_reveals_buttons_and_leaves_clean() {
+    use akssora_editor::GutterActionKind;
+    use akssora_git::{DiffHunk, DiffLine, DiffLineType, FileDiff, FileGitStatus, RepoDiff};
+    use akssora_terminal_ui::{CodeReviewLayout, CodeReviewModel, TabKind};
+    use std::path::PathBuf;
+
+    let repo_dir = std::env::temp_dir().join(format!(
+        "akssora_cr_gutter_test_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::create_dir_all(&repo_dir);
+    let file_path = PathBuf::from("src/lib.rs");
+    let full_path = repo_dir.join(&file_path);
+    let _ = std::fs::create_dir_all(full_path.parent().unwrap());
+    std::fs::write(&full_path, "fn first() {}\nfn added() {}\nfn last() {}\n").unwrap();
+
+    let mut model = CodeReviewModel::new(&repo_dir);
+    model.diff = RepoDiff {
+        files: vec![FileDiff {
+            path: file_path.clone(),
+            old_path: None,
+            status: FileGitStatus::Modified,
+            additions: 1,
+            deletions: 1,
+            line_count: 3,
+            is_binary: false,
+            hunks: vec![DiffHunk {
+                old_start: 1,
+                old_lines: 3,
+                new_start: 1,
+                new_lines: 3,
+                header: "@@ -1,3 +1,3 @@".to_string(),
+                lines: vec![
+                    DiffLine {
+                        line_type: DiffLineType::Context,
+                        content: "fn first() {}\n".to_string(),
+                        old_line_num: Some(1),
+                        new_line_num: Some(1),
+                    },
+                    DiffLine {
+                        line_type: DiffLineType::Delete,
+                        content: "fn old_deleted() {}\n".to_string(),
+                        old_line_num: Some(2),
+                        new_line_num: None,
+                    },
+                    DiffLine {
+                        line_type: DiffLineType::Add,
+                        content: "fn added() {}\n".to_string(),
+                        old_line_num: None,
+                        new_line_num: Some(2),
+                    },
+                    DiffLine {
+                        line_type: DiffLineType::Context,
+                        content: "fn last() {}\n".to_string(),
+                        old_line_num: Some(3),
+                        new_line_num: Some(3),
+                    },
+                ],
+            }],
+        }],
+        files_changed: 1,
+        total_additions: 1,
+        total_deletions: 1,
+    };
+
+    let mut app = akssora_terminal_app::App::new();
+    app.code_review = model;
+    let _ = app.tab_manager.add_tab(
+        "Review".to_string(),
+        TabKind::CodeReview {
+            repo_path: repo_dir.to_string_lossy().to_string(),
+        },
+    );
+
+    app.prepare_code_review_editor_file(0);
+
+    let (vx, vy, _vw, _vh) =
+        CodeReviewLayout::diff_viewport_rect(&app.code_review, 0.0, 0.0, 800.0, 600.0);
+    let card_x = vx + 16.0;
+    let card_top = vy + 12.0;
+    let base_lines_y = card_top
+        + CodeReviewLayout::CARD_HEADER_HEIGHT
+        + 8.0
+        + CodeReviewLayout::UNMODIFIED_LINES_HEIGHT;
+
+    // Line 1: Context (Y = base_lines_y + 0)
+    // Line 2: Delete  (Y = base_lines_y + 1 * DIFF_LINE_HEIGHT)
+    // Line 3: Add     (Y = base_lines_y + 2 * DIFF_LINE_HEIGHT)
+    // Line 4: Context (Y = base_lines_y + 3 * DIFF_LINE_HEIGHT)
+    let line1_y = base_lines_y + 0.0 * CodeReviewLayout::DIFF_LINE_HEIGHT + 5.0;
+    let line2_y = base_lines_y + 1.0 * CodeReviewLayout::DIFF_LINE_HEIGHT + 5.0;
+    let line3_y = base_lines_y + 2.0 * CodeReviewLayout::DIFF_LINE_HEIGHT + 5.0;
+
+    // 1. Hovering outside gutter (e.g. over code text) -> None
+    let hover_code = CodeReviewLayout::hit_test_gutter_hover(
+        &app.code_review,
+        0.0,
+        0.0,
+        800.0,
+        600.0,
+        card_x + 60.0,
+        line3_y,
+    );
+    assert_eq!(
+        hover_code, None,
+        "Pointer outside gutter must not trigger gutter hover"
+    );
+
+    // 2. Hovering over context line gutter -> None (no changes to stage/revert)
+    let hover_ctx = CodeReviewLayout::hit_test_gutter_hover(
+        &app.code_review,
+        0.0,
+        0.0,
+        800.0,
+        600.0,
+        card_x + 5.0,
+        line1_y,
+    );
+    assert_eq!(
+        hover_ctx, None,
+        "Context line has no git changes, buttons stay hidden"
+    );
+
+    // 3. Hovering over added line number (x = card_x + 5.0) -> reveals both buttons (action = None)
+    let hover_add_line = CodeReviewLayout::hit_test_gutter_hover(
+        &app.code_review,
+        0.0,
+        0.0,
+        800.0,
+        600.0,
+        card_x + 5.0,
+        line3_y,
+    );
+    assert_eq!(
+        hover_add_line,
+        Some(akssora_terminal_ui::CodeReviewGutterHover {
+            file_idx: 0,
+            row: 1,
+            is_deletion: false,
+            action: None,
+        }),
+        "Hovering over line number must reveal both buttons (action is None)"
+    );
+
+    // 4. Floating line action popup geometry & button hit-testing
+    app.code_review.hovered_gutter = hover_add_line;
+    let geom = CodeReviewLayout::line_action_popup_geometry(
+        &app.code_review,
+        0.0,
+        0.0,
+        800.0,
+        600.0,
+        0,
+        1,
+        false,
+    )
+    .expect("Popup geometry should exist above line number");
+
+    // Popup is positioned above the line number
+    assert!(geom.popup_rect.1 != line3_y);
+
+    let (ax, ay, aw, ah) = geom.add_btn_rect;
+    let hover_btn_add = CodeReviewLayout::hit_test_gutter_hover(
+        &app.code_review,
+        0.0,
+        0.0,
+        800.0,
+        600.0,
+        ax + aw * 0.5,
+        ay + ah * 0.5,
+    );
+    assert_eq!(
+        hover_btn_add,
+        Some(akssora_terminal_ui::CodeReviewGutterHover {
+            file_idx: 0,
+            row: 1,
+            is_deletion: false,
+            action: Some(GutterActionKind::StageLine),
+        }),
+        "Hovering over 'Stage Change' must target StageLine"
+    );
+
+    // 5. Hovering over "Revert Changes" button -> RevertLine action
+    let (rx, ry, rw, rh) = geom.remove_btn_rect;
+    let hover_btn_rev = CodeReviewLayout::hit_test_gutter_hover(
+        &app.code_review,
+        0.0,
+        0.0,
+        800.0,
+        600.0,
+        rx + rw * 0.5,
+        ry + rh * 0.5,
+    );
+    assert_eq!(
+        hover_btn_rev,
+        Some(akssora_terminal_ui::CodeReviewGutterHover {
+            file_idx: 0,
+            row: 1,
+            is_deletion: false,
+            action: Some(GutterActionKind::RevertLine),
+        }),
+        "Hovering over 'Revert Changes' must target RevertLine"
+    );
+
+    // 6. Hovering over deleted line number -> targets deleted line row with is_deletion: true
+    let hover_del_line = CodeReviewLayout::hit_test_gutter_hover(
+        &app.code_review,
+        0.0,
+        0.0,
+        800.0,
+        600.0,
+        card_x + 5.0,
+        line2_y,
+    );
+    assert_eq!(
+        hover_del_line,
+        Some(akssora_terminal_ui::CodeReviewGutterHover {
+            file_idx: 0,
+            row: 1,
+            is_deletion: true,
+            action: None,
+        }),
+        "Hovering over deleted line reveals both buttons with is_deletion: true"
+    );
+
+    // 7. Verify tooltip resolution for hovered gutter actions in Code Review
+    app.editor_hovered_gutter = Some((1, Some(GutterActionKind::StageLine)));
+    let tip_add = akssora_terminal_app::app::tooltips::code_review::check_code_review_tooltip(
+        &app,
+        ax + aw * 0.5,
+        ay + ah * 0.5,
+        0.0,
+        0.0,
+        800.0,
+        600.0,
+    );
+    assert!(tip_add.is_some());
+    assert_eq!(tip_add.unwrap().text, "Stage Change");
+
+    app.editor_hovered_gutter = Some((1, Some(GutterActionKind::RevertLine)));
+    let tip_rev = akssora_terminal_app::app::tooltips::code_review::check_code_review_tooltip(
+        &app,
+        rx + rw * 0.5,
+        ry + rh * 0.5,
+        0.0,
+        0.0,
+        800.0,
+        600.0,
+    );
+    assert!(tip_rev.is_some());
+    assert_eq!(tip_rev.unwrap().text, "Revert Changes");
+
+    // 8. Verify mouse pointer / hand cursor is active when hovering popup buttons
+    app.code_review.hovered_gutter = hover_btn_rev;
+    let is_hand = app.is_button_hovered(rx + rw * 0.5, ry + rh * 0.5, 800.0, 600.0, 0.0);
+    assert!(
+        is_hand,
+        "Hovering over popup button must trigger hand cursor"
+    );
+
+    // 9. Reverting added line discards only that line's changes without affecting unrelated lines
+    let initial_lines = app.active_editor().unwrap().buffer.line_count();
+    let handled_rev =
+        app.handle_code_review_click(rx + rw * 0.5, ry + rh * 0.5, 800.0, 600.0, 0.0, 0.0);
+    assert!(handled_rev, "Clicking revert line must be handled");
+    let after_revert_doc = app.active_editor().unwrap();
+    assert_eq!(
+        after_revert_doc.buffer.line_count(),
+        initial_lines - 1,
+        "Reverting added line must remove exactly that line"
+    );
+    assert_eq!(
+        after_revert_doc.buffer.get_line(0).unwrap().trim(),
+        "fn first() {}",
+        "Unrelated line 1 must remain intact"
+    );
+
+    let _ = std::fs::remove_dir_all(&repo_dir);
 }

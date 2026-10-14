@@ -99,21 +99,26 @@ pub fn render_terminal_blocks(
             }
         }
 
-        // INFO: Render active terminal cursor within block bounds.
+        // INFO: Render active terminal cursor with reduced, refined dimensions.
         if let Some((crow, ccol)) = cursor
             && crow < active_count
         {
             let x0 = block.x + pad_x + ccol as f32 * cell_w;
             let y0 = block.y + pad_y + y_offset + crow as f32 * cell_h;
-            if x0 < max_x && y0 < max_y {
-                let x1 = (x0 + cell_w).min(max_x);
-                let y1 = (y0 + cell_h).min(max_y);
+            // Reduce cursor height slightly (1.5px top/bottom margin) and width to be refined
+            let cur_pad_y = (cell_h * 0.1).clamp(1.0, 2.5);
+            let cur_w = (cell_w - 1.5).max(2.0);
+            let cur_x0 = x0;
+            let cur_y0 = y0 + cur_pad_y;
+            let cur_x1 = (cur_x0 + cur_w).min(max_x);
+            let cur_y1 = (y0 + cell_h - cur_pad_y).min(max_y);
+            if cur_x0 < max_x && cur_y0 < max_y && cur_x1 > cur_x0 && cur_y1 > cur_y0 {
                 push_quad(
                     verts,
-                    x0,
-                    y0,
-                    x1,
-                    y1,
+                    cur_x0,
+                    cur_y0,
+                    cur_x1,
+                    cur_y1,
                     solid_uv,
                     solid_uv,
                     theme.cursor,
@@ -137,8 +142,7 @@ pub fn render_terminal_blocks(
                 if cell.ch == ' ' || cell.ch == '\0' {
                     continue;
                 }
-                let Some(info) = renderer.glyph(queue, fonts, cell.ch, cell.bold, cell.italic)
-                else {
+                let Some(info) = renderer.glyph(queue, fonts, cell.ch, false, cell.italic) else {
                     continue;
                 };
                 let is_selected = selection
@@ -178,18 +182,21 @@ pub fn render_terminal_blocks(
         sb_ui.update_geometry(block.x, block.y, block.width as f32, block.height as f32);
         if let Some((sx, sy, sw, sh)) = sb_ui.thumb_rect(total_lines, visible_lines, scroll_offset)
         {
-            push_quad(
-                verts,
-                sx,
-                sb_ui.y,
-                sx + sw,
-                sb_ui.y + sb_ui.height,
-                solid_uv,
-                solid_uv,
-                sb_ui.track_color(theme),
-                screen_w,
-                screen_h,
-            );
+            let track_col = sb_ui.track_color(theme);
+            if track_col[3] > 0.0 {
+                push_quad(
+                    verts,
+                    sx,
+                    sb_ui.y,
+                    sx + sw,
+                    sb_ui.y + sb_ui.height,
+                    solid_uv,
+                    solid_uv,
+                    track_col,
+                    screen_w,
+                    screen_h,
+                );
+            }
 
             let thumb_col = sb_ui.thumb_color(theme);
             push_pill_thumb(

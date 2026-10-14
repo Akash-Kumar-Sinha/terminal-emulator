@@ -19,6 +19,7 @@ pub fn render_header_bar(
     tab_manager: &TabManager,
     tab_layout: TabLayoutPreference,
     split_trees: &HashMap<u64, PaneTree>,
+    code_review: Option<&akssora_terminal_ui::CodeReviewModel>,
     verts: &mut Vec<GlyphVertex>,
     solid_uv: [f32; 2],
     circle_uv: [[f32; 2]; 2],
@@ -51,19 +52,90 @@ pub fn render_header_bar(
         );
     }
 
+    // 1.1 Explorer Toggle button (beside sidebar toggle button)
+    crate::render_explorer_toggle::render_explorer_toggle_button(
+        verts, theme, header, solid_uv, circle_uv, screen_w, screen_h,
+    );
+
     // 2. Akssora branding & application name (visible at all times)
-    let (bx, _, _, _) = header.branding_rect(show_sidebar_toggle);
+    let (bx, _, _, _) = header.branding_rect_ex(show_sidebar_toggle, true);
     let brand_y = (header.height - cell_h) / 2.0;
     renderer.render_text(
         queue,
         fonts,
         verts,
-        "AKSSORA",
+        akssora_icons::AppLogoIcon::WORDMARK,
         bx,
         brand_y,
         80.0,
         theme.text_primary,
-        true,
+        false,
+        screen_w,
+        screen_h,
+    );
+
+    // 2.05 Left-side Git branch indicator and branch dropdown menu
+    crate::render_code_review_button::render_branch_header_button(
+        renderer,
+        queue,
+        fonts,
+        verts,
+        theme,
+        header,
+        show_sidebar_toggle,
+        solid_uv,
+        circle_uv,
+        screen_w,
+        screen_h,
+    );
+
+    // INFO: 2.1 Center Quick File Search bar (always accessible in header center)
+    let (qs_x, qs_y, qs_w, qs_h) = header.quick_search_rect(screen_w);
+    let is_qs_hovered = header.hovered_item == Some(HeaderItem::QuickSearch);
+    let qs_bg = if is_qs_hovered {
+        theme.search_bar_hover_background
+    } else {
+        theme.search_bar_background
+    };
+    crate::quad::push_rounded_rect(
+        verts,
+        qs_x,
+        qs_y,
+        qs_x + qs_w,
+        qs_y + qs_h,
+        4.0,
+        circle_uv,
+        solid_uv,
+        qs_bg,
+        screen_w,
+        screen_h,
+    );
+    let qs_text_y = qs_y + (qs_h - cell_h) * 0.5;
+    renderer.render_text(
+        queue,
+        fonts,
+        verts,
+        akssora_icons::SearchIcon::HEADER_LABEL,
+        qs_x + 10.0,
+        qs_text_y,
+        qs_w - 20.0,
+        theme.text_secondary,
+        false,
+        screen_w,
+        screen_h,
+    );
+
+    // 2.2 Code Review header button (beside Settings button)
+    crate::render_code_review_header_button(
+        renderer,
+        queue,
+        fonts,
+        verts,
+        theme,
+        header,
+        code_review,
+        solid_uv,
+        circle_uv,
         screen_w,
         screen_h,
     );
@@ -153,7 +225,7 @@ pub fn render_header_bar(
                     text_y,
                     text_w,
                     text_col,
-                    is_active,
+                    false,
                     screen_w,
                     screen_h,
                 );
@@ -186,7 +258,9 @@ pub fn render_header_bar(
                     } else {
                         theme.text_muted
                     };
-                    if let Some(info) = renderer.glyph(queue, fonts, '\u{00D7}', false, false) {
+                    if let Some(info) =
+                        renderer.glyph(queue, fonts, akssora_icons::CloseIcon::CHAR, false, false)
+                    {
                         let gx = cx + (cw - info.width) / 2.0;
                         let gy = cy + (ch - info.height) / 2.0;
                         push_quad(
@@ -218,7 +292,7 @@ pub fn render_header_bar(
                 ny + nh,
                 circle_uv[0],
                 circle_uv[1],
-                theme.button_hover_background,
+                theme.header_button_hover_background,
                 screen_w,
                 screen_h,
             );
@@ -228,7 +302,8 @@ pub fn render_header_bar(
         } else {
             theme.text_secondary
         };
-        if let Some(info) = renderer.glyph(queue, fonts, '+', false, false) {
+        if let Some(info) = renderer.glyph(queue, fonts, akssora_icons::AddIcon::CHAR, false, false)
+        {
             let gx = nx + (nw - info.width) / 2.0;
             let gy = ny + (nh - info.height) / 2.0;
             push_quad(

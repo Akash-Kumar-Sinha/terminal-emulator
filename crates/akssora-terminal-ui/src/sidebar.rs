@@ -84,7 +84,8 @@ impl Sidebar {
     pub const MIN_WIDTH: f32 = 160.0;
     pub const MAX_WIDTH: f32 = 480.0;
     pub const EXPANDED_WIDTH: f32 = Self::DEFAULT_WIDTH;
-    pub const ITEM_HEIGHT: f32 = 32.0;
+    pub const ITEM_HEIGHT: f32 = 36.0;
+    pub const ITEM_PADDING_Y: f32 = 2.0;
     pub const TOP_HEADER_HEIGHT: f32 = 38.0;
 
     pub fn new() -> Self {
@@ -187,7 +188,7 @@ impl Sidebar {
                     y: current_y,
                     height: Self::ITEM_HEIGHT,
                 });
-                current_y += Self::ITEM_HEIGHT;
+                current_y += Self::ITEM_HEIGHT + Self::ITEM_PADDING_Y;
 
                 if !is_collapsed {
                     let total = split_leaves.len();
@@ -204,7 +205,7 @@ impl Sidebar {
                             y: current_y,
                             height: Self::ITEM_HEIGHT,
                         });
-                        current_y += Self::ITEM_HEIGHT;
+                        current_y += Self::ITEM_HEIGHT + Self::ITEM_PADDING_Y;
                     }
                 }
             } else {
@@ -215,7 +216,7 @@ impl Sidebar {
                     y: current_y,
                     height: Self::ITEM_HEIGHT,
                 });
-                current_y += Self::ITEM_HEIGHT;
+                current_y += Self::ITEM_HEIGHT + Self::ITEM_PADDING_Y;
             }
         }
 

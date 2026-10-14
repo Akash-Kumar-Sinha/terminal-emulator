@@ -41,6 +41,18 @@ impl App {
                         icon: tab.kind.icon(),
                     });
                 }
+                TabKind::CodeReview { repo_path } => {
+                    items.push(SessionRowData {
+                        pane_id: tab.id,
+                        tab_id: tab.id,
+                        tab_index: tab_idx,
+                        name: tab.title.clone(),
+                        secondary_meta: format!("Code Review • {repo_path}"),
+                        project_name: String::new(),
+                        is_active: is_tab_active,
+                        icon: tab.kind.icon(),
+                    });
+                }
                 TabKind::Editor { path } => {
                     let short_path = shorten_path(std::path::Path::new(path));
                     items.push(SessionRowData {
@@ -262,6 +274,7 @@ impl App {
         match target {
             SidebarTarget::Tab(tab_idx) => {
                 self.tab_manager.select(tab_idx);
+                self.sync_active_tab_state();
                 if let Some(active_id) = self.tab_manager.active_id()
                     && let Some(tree) = self.split_trees.get(&active_id)
                     && !tree.contains_leaf(self.split_manager.active_pane_id.unwrap_or(0))
@@ -291,6 +304,7 @@ impl App {
             SidebarTarget::SplitPane { tab_idx, pane_id }
             | SidebarTarget::Session { tab_idx, pane_id } => {
                 self.tab_manager.select(tab_idx);
+                self.sync_active_tab_state();
                 self.split_manager.focus_pane(pane_id);
                 self.layout_blocks();
                 if let Some(win) = self.window.as_ref() {

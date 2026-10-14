@@ -7,3 +7,6 @@ authors.workspace = true
 description = "File explorer and directory tree management for Akssora"
 
 [dependencies]
+
+[dev-dependencies]
+rand.workspace = true

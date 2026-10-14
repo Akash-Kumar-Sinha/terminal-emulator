@@ -126,7 +126,7 @@ pub fn render_shortcuts_section(
             4.0,
             circle_uv,
             solid_uv,
-            [0.35, 0.15, 0.05, 1.0], // subtle amber warning bg
+            theme.warning_background,
             screen_w,
             screen_h,
         );
@@ -143,7 +143,7 @@ pub fn render_shortcuts_section(
             sx + 10.0,
             warn_y + (warn_h - cell_h) / 2.0,
             warn_w - 20.0,
-            [1.0, 0.8, 0.4, 1.0],
+            theme.warning_foreground,
             true,
             screen_w,
             screen_h,
@@ -195,7 +195,7 @@ pub fn render_shortcuts_section(
             .iter()
             .any(|c| c.first_action == act || c.second_action == act);
         let key_col = if is_conflict {
-            [1.0, 0.4, 0.4, 1.0] // Warning Red
+            theme.danger_foreground
         } else {
             theme.text_primary
         };

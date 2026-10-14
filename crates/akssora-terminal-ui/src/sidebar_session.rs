@@ -15,7 +15,8 @@ pub struct SessionRowData {
     pub icon: char,
 }
 
-pub const SESSION_ITEM_HEIGHT: f32 = 44.0;
+pub const SESSION_ITEM_HEIGHT: f32 = 48.0;
+pub const SESSION_ITEM_PADDING_Y: f32 = 2.0;
 pub const PROJECT_HEADER_HEIGHT: f32 = 28.0;
 
 // INFO: Organizes sessions into split-grouped sidebar rows with headers for multi-pane layouts.
@@ -76,7 +77,7 @@ pub fn compute_split_session_rows(
                         y: current_y,
                         height: SESSION_ITEM_HEIGHT,
                     });
-                    current_y += SESSION_ITEM_HEIGHT;
+                    current_y += SESSION_ITEM_HEIGHT + SESSION_ITEM_PADDING_Y;
                 }
             }
         } else if let Some(session) = tab_sessions.first() {
@@ -94,7 +95,7 @@ pub fn compute_split_session_rows(
                 y: current_y,
                 height: SESSION_ITEM_HEIGHT,
             });
-            current_y += SESSION_ITEM_HEIGHT;
+            current_y += SESSION_ITEM_HEIGHT + SESSION_ITEM_PADDING_Y;
         }
     }
 

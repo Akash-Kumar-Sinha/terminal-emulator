@@ -7,4 +7,12 @@ authors.workspace = true
 description = "Text and code editor buffer engine for Akssora"
 
 [dependencies]
+akssora-icons.workspace = true
 akssora-terminal-config.workspace = true
+akssora-git = { path = "../akssora-git" }
+ropey.workspace = true
+pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
+
+
+[dev-dependencies]
+rand.workspace = true

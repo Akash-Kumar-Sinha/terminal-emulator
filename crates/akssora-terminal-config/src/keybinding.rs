@@ -47,6 +47,13 @@ pub enum Action {
     Paste,
     ScrollPageUp,
     ScrollPageDown,
+    CloseEditorTab,
+    CloseOtherEditorTabs,
+    CloseAllEditorTabs,
+    FormatDocument,
+    ToggleMarkdownPreview,
+    ToggleMarkdownSplitPreview,
+    ToggleInlineDiff,
 }
 
 impl Action {
@@ -69,6 +76,13 @@ impl Action {
             Self::Paste => "Paste Clipboard",
             Self::ScrollPageUp => "Scroll Page Up",
             Self::ScrollPageDown => "Scroll Page Down",
+            Self::CloseEditorTab => "Close Editor Tab",
+            Self::CloseOtherEditorTabs => "Close Other Editor Tabs",
+            Self::CloseAllEditorTabs => "Close All Editor Tabs",
+            Self::FormatDocument => "Format Document",
+            Self::ToggleMarkdownPreview => "Toggle Markdown Preview",
+            Self::ToggleMarkdownSplitPreview => "Toggle Split Markdown Preview",
+            Self::ToggleInlineDiff => "Toggle Inline Diff",
         }
     }
 
@@ -93,6 +107,14 @@ impl Action {
             | Self::Paste
             | Self::ScrollPageUp
             | Self::ScrollPageDown => KeybindingScope::Terminal,
+
+            Self::CloseEditorTab
+            | Self::CloseOtherEditorTabs
+            | Self::CloseAllEditorTabs
+            | Self::FormatDocument
+            | Self::ToggleMarkdownPreview
+            | Self::ToggleMarkdownSplitPreview
+            | Self::ToggleInlineDiff => KeybindingScope::Editor,
         }
     }
 
@@ -114,6 +136,13 @@ impl Action {
         Action::Paste,
         Action::ScrollPageUp,
         Action::ScrollPageDown,
+        Action::CloseEditorTab,
+        Action::CloseOtherEditorTabs,
+        Action::CloseAllEditorTabs,
+        Action::FormatDocument,
+        Action::ToggleMarkdownPreview,
+        Action::ToggleMarkdownSplitPreview,
+        Action::ToggleInlineDiff,
     ];
 }
 
@@ -137,6 +166,13 @@ pub struct Keybindings {
     pub paste: Option<String>,
     pub scroll_page_up: Option<String>,
     pub scroll_page_down: Option<String>,
+    pub close_editor_tab: Option<String>,
+    pub close_other_editor_tabs: Option<String>,
+    pub close_all_editor_tabs: Option<String>,
+    pub format_document: Option<String>,
+    pub toggle_markdown_preview: Option<String>,
+    pub toggle_markdown_split_preview: Option<String>,
+    pub toggle_inline_diff: Option<String>,
 }
 
 impl Default for Keybindings {
@@ -159,6 +195,13 @@ impl Default for Keybindings {
             paste: Some("Ctrl+Shift+V".to_string()),
             scroll_page_up: Some("Shift+PageUp".to_string()),
             scroll_page_down: Some("Shift+PageDown".to_string()),
+            close_editor_tab: Some("Ctrl+W".to_string()),
+            close_other_editor_tabs: Some("Ctrl+Shift+W".to_string()),
+            close_all_editor_tabs: Some("Ctrl+K, Ctrl+W".to_string()),
+            format_document: Some("Alt+Shift+F".to_string()),
+            toggle_markdown_preview: Some("Ctrl+Shift+V".to_string()),
+            toggle_markdown_split_preview: Some("Ctrl+K V".to_string()),
+            toggle_inline_diff: Some("Ctrl+Alt+D".to_string()),
         }
     }
 }
@@ -183,6 +226,13 @@ impl Keybindings {
             Action::Paste => self.paste.as_deref(),
             Action::ScrollPageUp => self.scroll_page_up.as_deref(),
             Action::ScrollPageDown => self.scroll_page_down.as_deref(),
+            Action::CloseEditorTab => self.close_editor_tab.as_deref(),
+            Action::CloseOtherEditorTabs => self.close_other_editor_tabs.as_deref(),
+            Action::CloseAllEditorTabs => self.close_all_editor_tabs.as_deref(),
+            Action::FormatDocument => self.format_document.as_deref(),
+            Action::ToggleMarkdownPreview => self.toggle_markdown_preview.as_deref(),
+            Action::ToggleMarkdownSplitPreview => self.toggle_markdown_split_preview.as_deref(),
+            Action::ToggleInlineDiff => self.toggle_inline_diff.as_deref(),
         }
     }
 
@@ -206,6 +256,13 @@ impl Keybindings {
             Action::Paste => self.paste = val,
             Action::ScrollPageUp => self.scroll_page_up = val,
             Action::ScrollPageDown => self.scroll_page_down = val,
+            Action::CloseEditorTab => self.close_editor_tab = val,
+            Action::CloseOtherEditorTabs => self.close_other_editor_tabs = val,
+            Action::CloseAllEditorTabs => self.close_all_editor_tabs = val,
+            Action::FormatDocument => self.format_document = val,
+            Action::ToggleMarkdownPreview => self.toggle_markdown_preview = val,
+            Action::ToggleMarkdownSplitPreview => self.toggle_markdown_split_preview = val,
+            Action::ToggleInlineDiff => self.toggle_inline_diff = val,
         }
     }
 

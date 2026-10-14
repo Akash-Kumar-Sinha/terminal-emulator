@@ -11,6 +11,8 @@ use pathfinder_geometry::vector::Vector2F;
 
 pub const FONT_SIZE: f32 = 14.0;
 pub const UI_FONT_SIZE: f32 = 14.0;
+pub const PALETTE_FONT_SIZE: f32 = 12.0;
+pub const TOOLTIP_FONT_SIZE: f32 = 11.0;
 pub const LINE_HEIGHT_RATIO: f32 = 1.2;
 
 pub struct RasterGlyph {
@@ -24,19 +26,17 @@ pub struct RasterGlyph {
 #[derive(Clone)]
 struct Faces {
     regular: Font,
+    #[allow(dead_code)]
     bold: Font,
     italic: Font,
+    #[allow(dead_code)]
     bold_italic: Font,
 }
 
 impl Faces {
-    fn pick(&self, bold: bool, italic: bool) -> &Font {
-        match (bold, italic) {
-            (false, false) => &self.regular,
-            (true, false) => &self.bold,
-            (false, true) => &self.italic,
-            (true, true) => &self.bold_italic,
-        }
+    fn pick(&self, _bold: bool, italic: bool) -> &Font {
+        // INFO: Respect non-bold font preference: avoid heavy bold font across terminal, editor, and UI.
+        if italic { &self.italic } else { &self.regular }
     }
 }
 

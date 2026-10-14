@@ -43,10 +43,7 @@ pub fn push_pill_thumb(
     screen_w: f32,
     screen_h: f32,
 ) {
-    let radius = sw / 2.0;
-    let mid_v = (circle_uv[0][1] + circle_uv[1][1]) * 0.5;
-
-    if sh <= sw {
+    if (sh - sw).abs() < 1.0 {
         push_quad(
             verts,
             sx,
@@ -59,7 +56,11 @@ pub fn push_pill_thumb(
             screen_w,
             screen_h,
         );
-    } else {
+    } else if sh > sw {
+        // Vertical pill thumb
+        let radius = sw / 2.0;
+        let mid_v = (circle_uv[0][1] + circle_uv[1][1]) * 0.5;
+
         // Top rounded cap
         push_quad(
             verts,
@@ -94,6 +95,50 @@ pub fn push_pill_thumb(
             sx + sw,
             sy + sh,
             [circle_uv[0][0], mid_v],
+            circle_uv[1],
+            thumb_col,
+            screen_w,
+            screen_h,
+        );
+    } else {
+        // Horizontal pill thumb
+        let radius = sh / 2.0;
+        let mid_u = (circle_uv[0][0] + circle_uv[1][0]) * 0.5;
+
+        // Left rounded cap
+        push_quad(
+            verts,
+            sx,
+            sy,
+            sx + radius,
+            sy + sh,
+            circle_uv[0],
+            [mid_u, circle_uv[1][1]],
+            thumb_col,
+            screen_w,
+            screen_h,
+        );
+        // Middle solid rectangular body
+        push_quad(
+            verts,
+            sx + radius,
+            sy,
+            sx + sw - radius,
+            sy + sh,
+            solid_uv,
+            solid_uv,
+            thumb_col,
+            screen_w,
+            screen_h,
+        );
+        // Right rounded cap
+        push_quad(
+            verts,
+            sx + sw - radius,
+            sy,
+            sx + sw,
+            sy + sh,
+            [mid_u, circle_uv[0][1]],
             circle_uv[1],
             thumb_col,
             screen_w,

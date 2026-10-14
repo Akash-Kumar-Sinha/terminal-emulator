@@ -26,7 +26,7 @@ pub fn render_confirm_exit_dialog(
         screen_h,
         solid_uv,
         solid_uv,
-        [0.0, 0.0, 0.0, 0.78],
+        theme.modal_backdrop,
         screen_w,
         screen_h,
     );
@@ -36,17 +36,17 @@ pub fn render_confirm_exit_dialog(
     let mx = (screen_w - modal_w) / 2.0;
     let my = (screen_h - modal_h) / 2.0;
 
-    // 2. Card background (borderless, rounded rect, subtle background separation)
+    // 2. Card background (rgb(1,1,1), rounded rect, refined visual proportions)
     crate::quad::push_rounded_rect(
         verts,
         mx,
         my,
         mx + modal_w,
         my + modal_h,
-        8.0,
+        10.0,
         [[solid_uv[0], solid_uv[1]]; 2],
         solid_uv,
-        theme.session_selected_background,
+        theme.modal_card_background,
         screen_w,
         screen_h,
     );
@@ -81,62 +81,72 @@ pub fn render_confirm_exit_dialog(
         screen_h,
     );
 
-    // 5. Confirm button [Exit (Enter)]
+    // 5. Centered Buttons: [Exit (Enter)] [Cancel (Esc)]
     let btn_y = my + modal_h - 48.0;
     let btn_h = 32.0;
-    let c_x = mx + 24.0;
-    let c_w = 170.0;
+    let btn_gap = 16.0;
+    let c_w = 160.0;
+    let can_w = 140.0;
+    let total_buttons_w = c_w + can_w + btn_gap;
+    let start_btn_x = mx + (modal_w - total_buttons_w) / 2.0;
+
+    let c_x = start_btn_x;
     crate::quad::push_rounded_rect(
         verts,
         c_x,
         btn_y,
         c_x + c_w,
         btn_y + btn_h,
-        4.0,
+        6.0,
         [[solid_uv[0], solid_uv[1]]; 2],
         solid_uv,
-        theme.button_hover_background,
+        theme.modal_button_background,
         screen_w,
         screen_h,
     );
+    let exit_text = "Exit (Enter)";
+    let exit_text_w = exit_text.len() as f32 * ui_fonts.cell_w;
+    let exit_text_x = c_x + (c_w - exit_text_w).max(0.0) / 2.0;
     renderer.render_text(
         queue,
         ui_fonts,
         verts,
-        "Exit (Enter)",
-        c_x + 36.0,
-        btn_y + 8.0,
-        c_w - 40.0,
+        exit_text,
+        exit_text_x,
+        btn_y + (btn_h - ui_fonts.cell_h) * 0.5,
+        c_w,
         theme.text_primary,
         true,
         screen_w,
         screen_h,
     );
 
-    // 6. Cancel button [Cancel (Esc)]
-    let can_x = c_x + c_w + 16.0;
-    let can_w = 150.0;
+    // Cancel button
+    let can_x = c_x + c_w + btn_gap;
     crate::quad::push_rounded_rect(
         verts,
         can_x,
         btn_y,
         can_x + can_w,
         btn_y + btn_h,
-        4.0,
+        6.0,
         [[solid_uv[0], solid_uv[1]]; 2],
         solid_uv,
-        theme.session_background,
+        theme.modal_button_background,
         screen_w,
         screen_h,
     );
+    let cancel_text = "Cancel (Esc)";
+    let cancel_text_w = cancel_text.len() as f32 * ui_fonts.cell_w;
+    let cancel_text_x = can_x + (can_w - cancel_text_w).max(0.0) / 2.0;
     renderer.render_text(
         queue,
         ui_fonts,
         verts,
-        "Cancel (Esc)",
-        can_x + 30.0,
-        btn_y + 8.0,
-        can_w - 40.0,
+        cancel_text,
+        cancel_text_x,
+        btn_y + (btn_h - ui_fonts.cell_h) * 0.5,
+        can_w,
         theme.text_secondary,
         false,
         screen_w,

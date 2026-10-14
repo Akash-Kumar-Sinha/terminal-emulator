@@ -2,30 +2,41 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use akssora_terminal_config::{Config, FontConfig, Keybindings, TabLayoutPreference, Theme};
-use akssora_terminal_renderer::{FontManager, GlyphRenderer};
+use akssora_terminal_renderer::FontManager;
 use akssora_terminal_ui::{Block, Header, PaneTree, SettingsAction, Sidebar, TabManager, Tooltip};
-use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalSize;
-use winit::event::{Modifiers, WindowEvent};
-use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::ModifiersState;
-use winit::window::{Window, WindowId};
+use winit::window::Window;
 
 use crate::state::WgpuState;
 
+mod editor;
+mod explorer;
+mod input;
 mod keyboard;
 mod mouse;
 mod mouse_click;
+mod mouse_drag;
+mod mouse_hover;
 mod mouse_selection;
+mod mouse_wheel;
+pub mod review;
 mod session_ops;
 pub(crate) mod session_persist;
 pub(crate) mod session_tracker;
 mod split;
 mod split_state;
 mod tabs;
-mod tooltips;
+pub mod tooltips;
+mod window;
 
 pub use split_state::{PaneDragState, SplitManager};
+
+#[derive(Debug, Clone)]
+pub enum UnsavedCloseAction {
+    CloseSingle(usize),
+    CloseOthers(std::path::PathBuf),
+    CloseAll,
+}
 
 // INFO: Multi-tab window handler coordinating event dispatch, terminal state updates, and rendering loop.
 pub struct App {
@@ -49,11 +60,33 @@ pub struct App {
     pub(crate) pane_custom_names: HashMap<u64, String>,
     pub(crate) hovered_setting_action: Option<SettingsAction>,
     pub(crate) settings_layout_dropdown_open: bool,
+    pub(crate) settings_line_number_dropdown_open: bool,
     pub(crate) active_settings_tab: akssora_terminal_ui::SettingsTab,
     pub(crate) settings_search_query: String,
     pub prompt_confirm_exit: bool,
     pub session_file: Option<std::path::PathBuf>,
     pub context_menu: Option<akssora_terminal_ui::ContextMenu>,
+    pub explorer: akssora_terminal_ui::ExplorerUi,
+    pub quick_search: akssora_terminal_ui::QuickSearchUi,
+    pub editors: HashMap<u64, akssora_editor::Document>,
+    pub editor_open_files: Vec<std::path::PathBuf>,
+    pub editor_active_file: Option<std::path::PathBuf>,
+    pub editor_documents: HashMap<std::path::PathBuf, akssora_editor::Document>,
+    pub editor_preview_file: Option<std::path::PathBuf>,
+    pub editor_pinned_files: std::collections::HashSet<std::path::PathBuf>,
+    pub editor_hovered_tab: Option<usize>,
+    pub editor_hovered_close: Option<usize>,
+    pub editor_hovered_toolbar: Option<akssora_terminal_ui::EditorToolbarAction>,
+    pub editor_hovered_gutter: Option<(usize, Option<akssora_editor::GutterActionKind>)>,
+    pub editor_dragging_tab: Option<usize>,
+    pub editor_v_scrollbar: akssora_terminal_ui::Scrollbar,
+    pub editor_h_scrollbar: akssora_terminal_ui::Scrollbar,
+    pub unsaved_prompt_target: Option<UnsavedCloseAction>,
+    pub pending_chord: Option<(String, std::time::Instant)>,
+    pub explorer_has_custom_root: bool,
+    pub code_review: akssora_terminal_ui::CodeReviewModel,
+    pub hovered_code_review_action: Option<akssora_terminal_ui::CodeReviewAction>,
+    pub diff_worker: crate::app::review::DiffBackgroundWorker,
     pub(crate) is_selecting_text: bool,
     pub(crate) selection_start_pane: Option<u64>,
     pub(crate) selection_start_pt: Option<akssora_terminal_screen::TerminalPoint>,
@@ -78,7 +111,19 @@ impl Default for App {
         } else {
             0.0
         };
-        header.is_sidebar_expanded = sidebar.is_expanded;
+        let default_cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let repo_root_opt = akssora_git::GitInspector::repo_root(&default_cwd);
+        header.is_git_repo = repo_root_opt.is_some();
+        if let Some(ref root) = repo_root_opt {
+            header.git_branch = akssora_git::GitInspector::current_branch(root);
+            header.git_branches = akssora_git::GitInspector::list_branches(root);
+        }
+        let mut explorer = akssora_terminal_ui::ExplorerUi::new(&default_cwd);
+        explorer.git_status = akssora_git::GitInspector::status(&default_cwd);
+        header.is_explorer_expanded = explorer.is_expanded;
+        let code_review = akssora_terminal_ui::CodeReviewModel::new(&default_cwd);
+        header.git_additions = code_review.diff.total_additions;
+        header.git_deletions = code_review.diff.total_deletions;
         Self {
             window: None,
             state: None,
@@ -100,11 +145,33 @@ impl Default for App {
             pane_custom_names: HashMap::new(),
             hovered_setting_action: None,
             settings_layout_dropdown_open: false,
+            settings_line_number_dropdown_open: false,
             active_settings_tab: akssora_terminal_ui::SettingsTab::General,
             settings_search_query: String::new(),
             prompt_confirm_exit: false,
             session_file: None,
             context_menu: None,
+            explorer,
+            quick_search: akssora_terminal_ui::QuickSearchUi::new(),
+            editors: HashMap::new(),
+            editor_open_files: Vec::new(),
+            editor_active_file: None,
+            editor_documents: HashMap::new(),
+            editor_preview_file: None,
+            editor_pinned_files: std::collections::HashSet::new(),
+            editor_hovered_tab: None,
+            editor_hovered_close: None,
+            editor_hovered_toolbar: None,
+            editor_hovered_gutter: None,
+            editor_dragging_tab: None,
+            editor_v_scrollbar: akssora_terminal_ui::Scrollbar::new(),
+            editor_h_scrollbar: akssora_terminal_ui::Scrollbar::new_horizontal(),
+            unsaved_prompt_target: None,
+            pending_chord: None,
+            explorer_has_custom_root: false,
+            code_review,
+            hovered_code_review_action: None,
+            diff_worker: crate::app::review::DiffBackgroundWorker::new(),
             is_selecting_text: false,
             selection_start_pane: None,
             selection_start_pt: None,
@@ -197,12 +264,12 @@ impl App {
     }
 
     pub fn increase_ui_font_size(&mut self) {
-        let curr = self.config.ui_font_size;
+        let curr = self.current_ui_font_size();
         self.set_ui_font_size(curr + FontConfig::STEP);
     }
 
     pub fn decrease_ui_font_size(&mut self) {
-        let curr = self.config.ui_font_size;
+        let curr = self.current_ui_font_size();
         self.set_ui_font_size(curr - FontConfig::STEP);
     }
 
@@ -211,6 +278,8 @@ impl App {
     }
 
     pub fn set_test_fonts(&mut self, fonts: FontManager, ui_fonts: FontManager) {
+        self.config.font.size = fonts.size();
+        self.config.ui_font_size = ui_fonts.size();
         self.fonts = Some(fonts);
         self.ui_fonts = Some(ui_fonts);
     }
@@ -227,6 +296,10 @@ impl App {
             .as_ref()
             .map(|f| f.size())
             .unwrap_or(self.config.ui_font_size)
+    }
+
+    pub fn ui_cell_h(&self) -> f32 {
+        self.ui_fonts.as_ref().map(|f| f.cell_h).unwrap_or(18.0)
     }
 
     pub fn toggle_sidebar(&mut self) {
@@ -332,221 +405,4 @@ impl App {
 
 fn sidebar_width_needed(sidebar: &Sidebar) -> bool {
     sidebar.is_expanded
-}
-
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
-            return;
-        }
-
-        let window_size = PhysicalSize::new(self.config.window.width, self.config.window.height);
-        let window = event_loop
-            .create_window(
-                Window::default_attributes()
-                    .with_title("Akssora")
-                    .with_decorations(false)
-                    .with_inner_size(window_size),
-            )
-            .unwrap();
-        let window = Arc::new(window);
-
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let surface = instance.create_surface(window.clone()).unwrap();
-
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            compatible_surface: Some(&surface),
-            ..Default::default()
-        }))
-        .unwrap();
-
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
-
-        let size = window.inner_size();
-        let surface_caps = surface.get_capabilities(&adapter);
-        let format = surface_caps.formats[0];
-
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
-            width: size.width,
-            height: size.height,
-            present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: surface_caps.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
-        surface.configure(&device, &config);
-
-        let mut fonts = FontManager::new();
-        fonts.set_size(self.config.font.size);
-        let mut ui_fonts = FontManager::new();
-        ui_fonts.set_size(self.config.ui_font_size);
-        let glyphs = GlyphRenderer::new(&device, &queue, format);
-
-        self.window = Some(window.clone());
-        self.state = Some(WgpuState::new(
-            surface, adapter, device, queue, config, glyphs,
-        ));
-        self.fonts = Some(fonts);
-        self.ui_fonts = Some(ui_fonts);
-
-        // Open initial default terminal tab (or restore persisted session state)
-        if !self.restore_session_state() {
-            self.open_terminal_tab();
-        }
-
-        window.request_redraw();
-    }
-
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
-        event: WindowEvent,
-    ) {
-        match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-
-            WindowEvent::ModifiersChanged(mods) => {
-                self.modifiers = Modifiers::state(&mods);
-            }
-
-            WindowEvent::KeyboardInput { event, .. } => {
-                self.handle_keyboard_input(event_loop, &event);
-            }
-
-            WindowEvent::Resized(new_size) => {
-                if let Some(win) = self.window.as_ref() {
-                    self.header.is_maximized = win.is_maximized();
-                }
-                if let Some(state) = self.state.as_mut() {
-                    state.resize(new_size.width, new_size.height);
-                }
-                self.layout_blocks();
-            }
-
-            WindowEvent::MouseWheel { delta, .. } => {
-                self.handle_mouse_wheel(delta);
-            }
-
-            WindowEvent::CursorMoved { position, .. } => {
-                self.handle_cursor_moved(position);
-            }
-
-            WindowEvent::MouseInput { state, button, .. } => {
-                self.handle_mouse_input(event_loop, state, button);
-            }
-
-            WindowEvent::RedrawRequested => {
-                let mut should_exit = false;
-
-                // Pump all terminal sessions with bounded batches
-                let mut any_output = false;
-                for block in self.blocks.values_mut() {
-                    if block.shell.pump() {
-                        any_output = true;
-                    }
-                }
-
-                // Check closed terminal sessions
-                let closed_ids: Vec<u64> = self
-                    .blocks
-                    .iter()
-                    .filter(|(_, b)| b.shell.is_closed())
-                    .map(|(id, _)| *id)
-                    .collect();
-                for id in closed_ids {
-                    let is_split = self
-                        .split_trees
-                        .values()
-                        .any(|t| t.contains_leaf(id) && t.all_leaf_ids().len() > 1);
-                    if is_split {
-                        self.close_split_pane(id);
-                    } else {
-                        if let Some(pos) = self.tab_manager.tabs().iter().position(|t| t.id == id) {
-                            self.close_tab(pos);
-                        } else {
-                            let active = self.tab_manager.active_index();
-                            self.close_tab(active);
-                        }
-                        if self.tab_manager.is_empty() {
-                            should_exit = true;
-                        }
-                    }
-                }
-
-                if should_exit {
-                    event_loop.exit();
-                    return;
-                }
-
-                if let Some(win) = self.window.as_ref() {
-                    self.header.is_maximized = win.is_maximized();
-                }
-                self.header.is_settings_active = self
-                    .tab_manager
-                    .active_tab()
-                    .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::Settings))
-                    .unwrap_or(false);
-
-                let block_ids = self.active_tab_block_ids();
-                let drop_indicator = self.split_manager.pane_drag.as_ref().and_then(|pd| {
-                    pd.hover_target
-                        .map(|(_, zone, (x, y, w, h))| zone.preview_rect(x, y, w, h))
-                });
-                let session_items =
-                    if self.config.tab_layout.show_sidebar() && self.sidebar.is_expanded {
-                        Some(self.collect_session_items())
-                    } else {
-                        None
-                    };
-
-                if let (Some(state), Some(fonts), Some(ui_fonts)) = (
-                    self.state.as_mut(),
-                    self.fonts.as_ref(),
-                    self.ui_fonts.as_ref(),
-                ) {
-                    let blocks: Vec<&Block> = block_ids
-                        .into_iter()
-                        .filter_map(|id| self.blocks.get(&id))
-                        .collect();
-
-                    let conflicts = self.config.keybindings.find_conflicts();
-                    state.render(
-                        fonts,
-                        ui_fonts,
-                        &self.theme,
-                        &self.config,
-                        self.active_settings_tab,
-                        &self.settings_search_query,
-                        &conflicts,
-                        &self.header,
-                        &blocks,
-                        &self.sidebar,
-                        &self.tab_manager,
-                        self.config.tab_layout,
-                        &self.split_trees,
-                        self.split_manager.active_pane_id,
-                        self.active_tooltip.as_ref(),
-                        self.hovered_setting_action,
-                        self.settings_layout_dropdown_open,
-                        self.prompt_confirm_exit,
-                        drop_indicator,
-                        session_items.as_deref(),
-                        self.context_menu.as_ref(),
-                    );
-                    self.last_render_time = Some(std::time::Instant::now());
-                }
-
-                let _ = any_output;
-                if let Some(window) = self.window.as_ref() {
-                    window.request_redraw();
-                }
-            }
-
-            _ => {}
-        }
-    }
 }

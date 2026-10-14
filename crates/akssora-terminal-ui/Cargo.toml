@@ -7,6 +7,10 @@ authors.workspace = true
 description = "UI chrome, custom header titlebar, and block components for Akssora"
 
 [dependencies]
+akssora-icons.workspace = true
 akssora-terminal-config.workspace = true
 akssora-terminal-core.workspace = true
+akssora-editor.workspace = true
+akssora-file-explorer.workspace = true
+akssora-git.workspace = true
 rand.workspace = true

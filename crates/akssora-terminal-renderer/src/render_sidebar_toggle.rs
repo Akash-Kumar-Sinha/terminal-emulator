@@ -4,12 +4,6 @@ use akssora_terminal_ui::{Header, HeaderItem};
 use crate::quad::{push_quad, push_rounded_rect};
 use crate::vertex::GlyphVertex;
 
-// INFO: Subtle zinc hover background and monochrome neutral accents for the sidebar toggle button.
-const ZINC_HOVER_BG: [f32; 4] = [0.18, 0.18, 0.20, 0.85];
-const ZINC_ACTIVE_BG: [f32; 4] = [0.15, 0.15, 0.16, 0.90];
-const WHITE_ACCENT: [f32; 4] = [1.0, 1.0, 1.0, 0.95];
-const WHITE_FOCUS_RING: [f32; 4] = [0.70, 0.70, 0.70, 0.80];
-
 // INFO: Renders the minimal outline sidebar toggle button with zinc hover, blue accent, and directional state.
 pub fn render_sidebar_toggle_button(
     verts: &mut Vec<GlyphVertex>,
@@ -28,9 +22,9 @@ pub fn render_sidebar_toggle_button(
     // 1. Button container background (completely transparent in default state)
     if is_hovered || is_focused || is_active {
         let bg_col = if is_active {
-            ZINC_ACTIVE_BG
+            theme.header_button_active_background
         } else {
-            ZINC_HOVER_BG
+            theme.header_button_hover_background
         };
         push_rounded_rect(
             verts,
@@ -47,7 +41,7 @@ pub fn render_sidebar_toggle_button(
         );
     }
 
-    // 2. Restrained blue accent focus ring on keyboard focus
+    // 2. Restrained accent focus ring on keyboard focus
     if is_focused {
         let ring_pad = 1.0;
         let rx0 = bx - ring_pad;
@@ -63,7 +57,7 @@ pub fn render_sidebar_toggle_button(
             ry0 + 1.0,
             solid_uv,
             solid_uv,
-            WHITE_FOCUS_RING,
+            theme.header_button_focus_ring,
             screen_w,
             screen_h,
         );
@@ -75,7 +69,7 @@ pub fn render_sidebar_toggle_button(
             ry1,
             solid_uv,
             solid_uv,
-            WHITE_FOCUS_RING,
+            theme.header_button_focus_ring,
             screen_w,
             screen_h,
         );
@@ -87,7 +81,7 @@ pub fn render_sidebar_toggle_button(
             ry1 - r,
             solid_uv,
             solid_uv,
-            WHITE_FOCUS_RING,
+            theme.header_button_focus_ring,
             screen_w,
             screen_h,
         );
@@ -99,161 +93,40 @@ pub fn render_sidebar_toggle_button(
             ry1 - r,
             solid_uv,
             solid_uv,
-            WHITE_FOCUS_RING,
+            theme.header_button_focus_ring,
             screen_w,
             screen_h,
         );
     }
 
-    // 3. Crisp outline icon geometry (18px x 14px, balanced proportions)
-    let icon_w = 18.0;
-    let icon_h = 14.0;
+    // 3. Crisp outline icon geometry
     let stroke = 1.0;
+    let ix = (bx + (btn_w - akssora_icons::SidebarToggleIcon::WIDTH) * 0.5).round();
+    let iy = (by + (btn_h - akssora_icons::SidebarToggleIcon::HEIGHT) * 0.5).round();
 
-    let ix = (bx + (btn_w - icon_w) * 0.5).round();
-    let iy = (by + (btn_h - icon_h) * 0.5).round();
-
-    let stroke_col = if is_focused || is_active {
-        WHITE_ACCENT
-    } else if is_hovered {
+    let stroke_col = if is_focused || is_active || is_hovered {
         theme.text_primary
     } else {
         theme.text_secondary
     };
 
-    // Outer rectangle frame
-    push_quad(
-        verts,
+    let panel_col = if is_hovered || is_focused || is_active {
+        theme.text_primary
+    } else {
+        theme.text_secondary
+    };
+
+    let mut sink =
+        crate::icon_sink::VertexIconSink::new(verts, solid_uv, circle_uv, screen_w, screen_h);
+    akssora_icons::SidebarToggleIcon::draw(
+        &mut sink,
         ix,
         iy,
-        ix + icon_w,
-        iy + stroke,
-        solid_uv,
-        solid_uv,
+        stroke,
+        header.is_sidebar_expanded,
         stroke_col,
-        screen_w,
-        screen_h,
+        panel_col,
     );
-    push_quad(
-        verts,
-        ix,
-        iy + icon_h - stroke,
-        ix + icon_w,
-        iy + icon_h,
-        solid_uv,
-        solid_uv,
-        stroke_col,
-        screen_w,
-        screen_h,
-    );
-    push_quad(
-        verts,
-        ix,
-        iy + stroke,
-        ix + stroke,
-        iy + icon_h - stroke,
-        solid_uv,
-        solid_uv,
-        stroke_col,
-        screen_w,
-        screen_h,
-    );
-    push_quad(
-        verts,
-        ix + icon_w - stroke,
-        iy + stroke,
-        ix + icon_w,
-        iy + icon_h - stroke,
-        solid_uv,
-        solid_uv,
-        stroke_col,
-        screen_w,
-        screen_h,
-    );
-
-    // Vertical divider separating the narrow left sidebar from larger content area
-    let div_x = ix + 5.5;
-    push_quad(
-        verts,
-        div_x,
-        iy + stroke,
-        div_x + stroke,
-        iy + icon_h - stroke,
-        solid_uv,
-        solid_uv,
-        stroke_col,
-        screen_w,
-        screen_h,
-    );
-
-    // 4. Panel state and directional indicator
-    if header.is_sidebar_expanded {
-        // Open state: Left sidebar is filled with restrained white accent to represent open state
-        let panel_col = if is_hovered || is_focused || is_active {
-            WHITE_ACCENT
-        } else {
-            [WHITE_ACCENT[0], WHITE_ACCENT[1], WHITE_ACCENT[2], 0.85]
-        };
-        push_quad(
-            verts,
-            ix + stroke,
-            iy + stroke,
-            div_x,
-            iy + icon_h - stroke,
-            solid_uv,
-            solid_uv,
-            panel_col,
-            screen_w,
-            screen_h,
-        );
-    } else {
-        // Closed state: Left sidebar is hollow with subtle directional chevron pointing right to indicate expansion
-        let cy = (iy + icon_h * 0.5).round();
-        let cx = (ix + 2.5).round();
-        let chevron_col = if is_focused || is_active {
-            WHITE_ACCENT
-        } else if is_hovered {
-            theme.text_primary
-        } else {
-            theme.text_muted
-        };
-        push_quad(
-            verts,
-            cx - 1.0,
-            cy - 2.5,
-            cx,
-            cy - 1.0,
-            solid_uv,
-            solid_uv,
-            chevron_col,
-            screen_w,
-            screen_h,
-        );
-        push_quad(
-            verts,
-            cx,
-            cy - 1.0,
-            cx + 1.0,
-            cy + 1.0,
-            solid_uv,
-            solid_uv,
-            chevron_col,
-            screen_w,
-            screen_h,
-        );
-        push_quad(
-            verts,
-            cx - 1.0,
-            cy + 1.0,
-            cx,
-            cy + 2.5,
-            solid_uv,
-            solid_uv,
-            chevron_col,
-            screen_w,
-            screen_h,
-        );
-    }
 }
 
 #[cfg(test)]

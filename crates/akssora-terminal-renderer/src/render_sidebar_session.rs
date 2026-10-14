@@ -27,7 +27,11 @@ pub fn render_project_header(
     let ascent = fonts.ascent_px;
 
     // Chevron icon
-    let chevron_char = if is_collapsed { '\u{25B8}' } else { '\u{25BE}' };
+    let chevron_char = if is_collapsed {
+        akssora_icons::ChevronRightIcon::CHAR_SMALL
+    } else {
+        akssora_icons::ChevronDownIcon::CHAR_SMALL
+    };
     let chevron_col = theme.text_secondary;
     if let Some(info) = renderer.glyph(queue, fonts, chevron_char, false, false) {
         let gx = 10.0 + info.bearing_left;
@@ -107,7 +111,11 @@ pub fn render_split_group_header(
     let ascent = fonts.ascent_px;
 
     // Chevron icon
-    let chevron_char = if is_collapsed { '\u{25B8}' } else { '\u{25BE}' };
+    let chevron_char = if is_collapsed {
+        akssora_icons::ChevronRightIcon::CHAR_SMALL
+    } else {
+        akssora_icons::ChevronDownIcon::CHAR_SMALL
+    };
     let chevron_col = theme.text_secondary;
     if let Some(info) = renderer.glyph(queue, fonts, chevron_char, false, false) {
         let gx = 8.0 + info.bearing_left;
@@ -274,7 +282,7 @@ pub fn render_session_entry(
         title_y,
         title_max_w,
         title_col,
-        is_active,
+        false,
         screen_w,
         screen_h,
     );
@@ -318,7 +326,9 @@ pub fn render_session_entry(
                 screen_h,
             );
         }
-        if let Some(info) = renderer.glyph(queue, fonts, '\u{00D7}', false, false) {
+        if let Some(info) =
+            renderer.glyph(queue, fonts, akssora_icons::CloseIcon::CHAR, false, false)
+        {
             let gx = cx + (btn_size - info.width) / 2.0;
             let gy = cy + (btn_size - info.height) / 2.0;
             let close_col = if is_close_hovered {

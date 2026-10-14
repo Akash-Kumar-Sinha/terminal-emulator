@@ -39,6 +39,40 @@ impl Header {
                 }
             }
 
+            // 1.1 Explorer toggle button (beside the sidebar toggle button)
+            let (etx, ety, etw, eth) = self.explorer_toggle_rect();
+            if x >= etx && x < etx + etw && y >= ety && y < ety + eth {
+                return Some(HeaderItem::ExplorerToggle);
+            }
+
+            // 1.2 Center quick search bar
+            let (qs_x, qs_y, qs_w, qs_h) = self.quick_search_rect(window_w);
+            if x >= qs_x && x < qs_x + qs_w && y >= qs_y && y < qs_y + qs_h {
+                return Some(HeaderItem::QuickSearch);
+            }
+
+            // 1.3 Left-side git branch button (beside branding)
+            if self.is_git_repo {
+                let (br_x, br_y, br_w, br_h) = self.branch_button_rect(show_toggle, true);
+                if br_w > 0.0 && x >= br_x && x < br_x + br_w && y >= br_y && y < br_y + br_h {
+                    return Some(HeaderItem::BranchDropdown);
+                }
+            }
+
+            // 1.4 Left-side branch dropdown popup (when open and multiple branches exist)
+            if self.branch_dropdown_open && self.is_git_repo && self.git_branches.len() > 1 {
+                let (mx, my, mw, mh) = self.branch_dropdown_rect(show_toggle, true);
+                if x >= mx && x <= mx + mw && y >= my && y <= my + mh {
+                    for i in 0..self.git_branches.len() {
+                        let (ix, iy, iw, ih) = self.branch_dropdown_item_rect(i, show_toggle, true);
+                        if x >= ix && x <= ix + iw && y >= iy && y <= iy + ih {
+                            return Some(HeaderItem::BranchItem(i));
+                        }
+                    }
+                    return Some(HeaderItem::BranchDropdown);
+                }
+            }
+
             // 2. Window control buttons
             for btn in [
                 HeaderButton::Close,
@@ -55,6 +89,14 @@ impl Header {
             let (sx, sy, sw, sh) = self.settings_button_rect(window_w);
             if x >= sx && x < sx + sw && y >= sy && y < sy + sh {
                 return Some(HeaderItem::Settings);
+            }
+
+            // 4. Code review stats button beside settings (only if git repo is initialized)
+            if self.is_git_repo {
+                let (cr_x, cr_y, cr_w, cr_h) = self.code_review_button_rect(window_w);
+                if cr_w > 0.0 && x >= cr_x && x < cr_x + cr_w && y >= cr_y && y < cr_y + cr_h {
+                    return Some(HeaderItem::CodeReview);
+                }
             }
 
             return None;

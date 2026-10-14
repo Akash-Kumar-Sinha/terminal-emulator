@@ -266,7 +266,11 @@ fn render_tab_entry(
 
     let mut icon_x = 14.0;
     if let Some(is_col) = collapsed {
-        let ch = if is_col { '\u{25B8}' } else { '\u{25BE}' };
+        let ch = if is_col {
+            akssora_icons::ChevronRightIcon::CHAR_SMALL
+        } else {
+            akssora_icons::ChevronDownIcon::CHAR_SMALL
+        };
         let col_c = if is_active {
             theme.text_primary
         } else {
@@ -339,7 +343,7 @@ fn render_tab_entry(
             icon_y,
             title_max_w,
             title_col,
-            is_active,
+            false,
             screen_w,
             screen_h,
         );
@@ -412,9 +416,9 @@ fn render_split_entry(
     );
 
     let branch = if is_last {
-        "\u{2514}\u{2500} "
+        akssora_icons::TreeBranchLastIcon::GLYPH
     } else {
-        "\u{251C}\u{2500} "
+        akssora_icons::TreeBranchIcon::GLYPH
     };
     let label = format!("{}Terminal {}", branch, child_index + 1);
     let text_x = 22.0;
@@ -427,16 +431,7 @@ fn render_split_entry(
     };
 
     renderer.render_text(
-        queue,
-        fonts,
-        verts,
-        &label,
-        text_x,
-        text_y,
-        text_max_w,
-        text_col,
-        is_pane_active,
-        screen_w,
+        queue, fonts, verts, &label, text_x, text_y, text_max_w, text_col, false, screen_w,
         screen_h,
     );
 
@@ -500,7 +495,7 @@ fn render_new_tab_entry(
         theme.text_secondary
     };
 
-    if let Some(info) = renderer.glyph(queue, fonts, '+', false, false) {
+    if let Some(info) = renderer.glyph(queue, fonts, akssora_icons::AddIcon::CHAR, false, false) {
         let gx = plus_x + info.bearing_left;
         let gy = plus_y + ascent + info.bearing_top;
         push_quad(
@@ -566,7 +561,7 @@ fn render_close_icon(
             screen_h,
         );
     }
-    if let Some(info) = renderer.glyph(queue, fonts, '\u{00D7}', false, false) {
+    if let Some(info) = renderer.glyph(queue, fonts, akssora_icons::CloseIcon::CHAR, false, false) {
         let gx = cx + (btn_size - info.width) / 2.0;
         let gy = cy + (btn_size - info.height) / 2.0;
         let close_col = if is_hovered {

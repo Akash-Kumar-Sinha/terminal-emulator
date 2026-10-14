@@ -82,6 +82,27 @@ impl Perform for GridHandler<'_> {
             'K' if !private => {
                 self.grid.erase_in_line(first_param(params, 0));
             }
+            'P' if !private => {
+                self.grid.delete_chars(first_param(params, 1) as usize);
+            }
+            '@' if !private => {
+                self.grid.insert_chars(first_param(params, 1) as usize);
+            }
+            'X' if !private => {
+                self.grid.erase_chars(first_param(params, 1) as usize);
+            }
+            'L' if !private => {
+                self.grid.insert_lines(first_param(params, 1) as usize);
+            }
+            'M' if !private => {
+                self.grid.delete_lines(first_param(params, 1) as usize);
+            }
+            's' => {
+                self.grid.save_cursor();
+            }
+            'u' => {
+                self.grid.restore_cursor();
+            }
             'm' => {
                 self.grid.apply_sgr(&flatten_params(params));
             }
@@ -106,6 +127,15 @@ impl Perform for GridHandler<'_> {
             _ => {}
         }
     }
+
+    fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, byte: u8) {
+        match byte {
+            b'7' => self.grid.save_cursor(),
+            b'8' => self.grid.restore_cursor(),
+            _ => {}
+        }
+    }
+
     fn osc_dispatch(&mut self, params: &[&[u8]], _bell_terminated: bool) {
         if params.is_empty() {
             return;

@@ -3,6 +3,7 @@
 pub enum TabKind {
     Terminal,
     Editor { path: String },
+    CodeReview { repo_path: String },
     ApiTesting { workspace: String },
     PluginManagement,
     Settings,
@@ -11,11 +12,12 @@ pub enum TabKind {
 impl TabKind {
     pub fn icon(&self) -> char {
         match self {
-            Self::Terminal => '>',
-            Self::Editor { .. } => '\u{2261}',
-            Self::ApiTesting { .. } => '\u{21C4}',
-            Self::PluginManagement => '\u{29C9}',
-            Self::Settings => '\u{2699}',
+            Self::Terminal => akssora_icons::TerminalSessionIcon::CHAR,
+            Self::Editor { .. } => akssora_icons::EditorSessionIcon::CHAR,
+            Self::CodeReview { .. } => akssora_icons::CodeReviewSessionIcon::CHAR,
+            Self::ApiTesting { .. } => akssora_icons::ApiTestingSessionIcon::CHAR,
+            Self::PluginManagement => akssora_icons::PluginSessionIcon::CHAR,
+            Self::Settings => akssora_icons::SettingsSessionIcon::CHAR,
         }
     }
 }
@@ -47,6 +49,22 @@ impl Tab {
             title: title.into(),
             kind: TabKind::Editor { path: path.into() },
             custom_name: false,
+            first_command: None,
+        }
+    }
+
+    pub fn new_code_review(
+        id: u64,
+        repo_path: impl Into<String>,
+        title: impl Into<String>,
+    ) -> Self {
+        Self {
+            id,
+            title: title.into(),
+            kind: TabKind::CodeReview {
+                repo_path: repo_path.into(),
+            },
+            custom_name: true,
             first_command: None,
         }
     }
@@ -109,12 +127,20 @@ impl TabManager {
         &self.tabs
     }
 
+    pub fn tabs_mut(&mut self) -> &mut [Tab] {
+        &mut self.tabs
+    }
+
     pub fn active_index(&self) -> usize {
         self.active_idx
     }
 
     pub fn active_tab(&self) -> Option<&Tab> {
         self.tabs.get(self.active_idx)
+    }
+
+    pub fn active_tab_mut(&mut self) -> Option<&mut Tab> {
+        self.tabs.get_mut(self.active_idx)
     }
 
     pub fn active_id(&self) -> Option<u64> {

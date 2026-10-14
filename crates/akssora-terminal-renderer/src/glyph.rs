@@ -139,32 +139,56 @@ impl GlyphRenderer {
         active_tooltip: Option<&Tooltip>,
         hovered_setting_action: Option<akssora_terminal_ui::SettingsAction>,
         layout_dropdown_open: bool,
+        line_number_dropdown_open: bool,
         confirm_exit: bool,
         drop_indicator: Option<(f32, f32, f32, f32)>,
         sessions: Option<&[akssora_terminal_ui::SessionRowData]>,
         context_menu: Option<&akssora_terminal_ui::ContextMenu>,
+        explorer: Option<&akssora_terminal_ui::ExplorerUi>,
+        editor_documents: &std::collections::HashMap<std::path::PathBuf, akssora_editor::Document>,
+        active_editor: Option<&akssora_editor::Document>,
+        file_tabs: &[akssora_terminal_ui::EditorFileTab],
+        hovered_file_tab: Option<usize>,
+        hovered_file_close: Option<usize>,
+        hovered_file_toolbar: Option<akssora_terminal_ui::EditorToolbarAction>,
+        quick_search: Option<&akssora_terminal_ui::QuickSearchUi>,
+        editor_scrollbars: Option<(
+            &akssora_terminal_ui::Scrollbar,
+            &akssora_terminal_ui::Scrollbar,
+        )>,
+        hovered_editor_gutter: Option<(usize, Option<akssora_editor::GutterActionKind>)>,
+        unsaved_changes_prompt: Option<&str>,
+        code_review: Option<&akssora_terminal_ui::CodeReviewModel>,
+        hovered_code_review_action: Option<&akssora_terminal_ui::CodeReviewAction>,
     ) {
         let mut verts: Vec<GlyphVertex> = Vec::new();
         let show_sidebar = tab_layout.show_sidebar();
         let sb_w = sidebar.effective_width(show_sidebar);
+        let exp_w = explorer.map(|e| e.effective_width()).unwrap_or(0.0);
         let top_h = header.total_height(tab_layout.includes_title_bar());
         let solid_uv = self.atlas.solid_uv;
         let circle_uv = self.atlas.circle_uv;
+
+        let ws_x = sb_w + exp_w;
+        let ws_y = top_h;
+        let ws_w = (screen_w - ws_x).max(0.0);
+        let ws_h = (screen_h - top_h).max(0.0);
 
         let is_settings = tab_manager
             .active_tab()
             .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::Settings))
             .unwrap_or(false);
 
+        let is_code_review = tab_manager
+            .active_tab()
+            .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::CodeReview { .. }))
+            .unwrap_or(false);
+
         if is_settings {
-            let ws_x = sb_w;
-            let ws_y = top_h;
-            let ws_w = (screen_w - sb_w).max(0.0);
-            let ws_h = (screen_h - top_h).max(0.0);
             render_settings_panel(
                 self,
                 queue,
-                fonts,
+                ui_fonts,
                 fonts.size(),
                 theme,
                 config,
@@ -174,6 +198,53 @@ impl GlyphRenderer {
                 tab_layout,
                 hovered_setting_action,
                 layout_dropdown_open,
+                line_number_dropdown_open,
+                ws_x,
+                ws_y,
+                ws_w,
+                ws_h,
+                &mut verts,
+                solid_uv,
+                circle_uv,
+                screen_w,
+                screen_h,
+            );
+        } else if is_code_review && let Some(cr) = code_review {
+            crate::render_code_review_panel(
+                self,
+                queue,
+                fonts,
+                ui_fonts,
+                theme,
+                cr,
+                editor_documents,
+                active_editor,
+                hovered_code_review_action,
+                hovered_editor_gutter,
+                ws_x,
+                ws_y,
+                ws_w,
+                ws_h,
+                &mut verts,
+                solid_uv,
+                circle_uv,
+                screen_w,
+                screen_h,
+            );
+        } else if let Some(doc) = active_editor {
+            crate::render_editor_view(
+                self,
+                queue,
+                fonts,
+                ui_fonts,
+                theme,
+                doc,
+                file_tabs,
+                hovered_file_tab,
+                hovered_file_close,
+                hovered_file_toolbar,
+                editor_scrollbars,
+                hovered_editor_gutter,
                 ws_x,
                 ws_y,
                 ws_w,
@@ -227,6 +298,17 @@ impl GlyphRenderer {
             );
         }
 
+        // INFO: File Explorer panel when expanded
+        if let Some(exp) = explorer
+            && exp.is_expanded
+            && exp.width > 0.0
+        {
+            crate::render_file_explorer_panel(
+                self, queue, ui_fonts, theme, exp, sb_w, top_h, &mut verts, solid_uv, circle_uv,
+                screen_w, screen_h,
+            );
+        }
+
         // 3. Application header and (if TitleBar layout) terminal tab bar (untouchable by font scaling)
         render_header_bar(
             self,
@@ -237,6 +319,7 @@ impl GlyphRenderer {
             tab_manager,
             tab_layout,
             split_trees,
+            code_review,
             &mut verts,
             solid_uv,
             circle_uv,
@@ -250,6 +333,81 @@ impl GlyphRenderer {
                 self, queue, ui_fonts, theme, cm, &mut verts, circle_uv, solid_uv, screen_w,
                 screen_h,
             );
+        }
+
+        // INFO: 3.2 Command-palette quick file search overlay
+        if let Some(qs) = quick_search {
+            crate::render_quick_search::render_quick_search_overlay(
+                self,
+                queue,
+                ui_fonts,
+                theme,
+                qs,
+                &mut verts,
+                solid_uv,
+                circle_uv,
+                screen_w,
+                screen_h,
+                header.height,
+            );
+        }
+
+        // 3.3 Top-level Dropdown Overlays (highest Z-index above all panels, sidebar, explorer, and header)
+        if header.branch_dropdown_open && header.git_branches.len() > 1 {
+            crate::render_code_review_button::render_branch_dropdown_list(
+                self,
+                queue,
+                ui_fonts,
+                &mut verts,
+                theme,
+                header,
+                show_sidebar,
+                solid_uv,
+                circle_uv,
+                screen_w,
+                screen_h,
+            );
+        }
+
+        if is_settings {
+            if layout_dropdown_open
+                && active_settings_tab == akssora_terminal_ui::SettingsTab::General
+            {
+                crate::render_settings_layout::render_tab_layout_dropdown_list(
+                    self,
+                    queue,
+                    ui_fonts,
+                    theme,
+                    tab_layout,
+                    hovered_setting_action,
+                    ws_x,
+                    ws_y,
+                    ws_w,
+                    &mut verts,
+                    solid_uv,
+                    screen_w,
+                    screen_h,
+                );
+            }
+            if line_number_dropdown_open
+                && active_settings_tab == akssora_terminal_ui::SettingsTab::Editor
+            {
+                crate::render_settings::render_line_number_dropdown_list(
+                    self,
+                    queue,
+                    ui_fonts,
+                    theme,
+                    config.line_number_mode,
+                    hovered_setting_action,
+                    ws_x,
+                    ws_y,
+                    &mut verts,
+                    solid_uv,
+                    circle_uv,
+                    screen_w,
+                    screen_h,
+                );
+            }
         }
 
         // 4. Floating tooltip overlay
@@ -274,6 +432,13 @@ impl GlyphRenderer {
         if confirm_exit {
             render_confirm_exit_dialog(
                 self, queue, ui_fonts, theme, screen_w, screen_h, &mut verts, solid_uv,
+            );
+        }
+
+        // 6. Unsaved changes confirmation prompt modal dialog
+        if let Some(file_title) = unsaved_changes_prompt {
+            crate::render_unsaved_changes_dialog(
+                self, queue, ui_fonts, theme, screen_w, screen_h, file_title, &mut verts, solid_uv,
             );
         }
 

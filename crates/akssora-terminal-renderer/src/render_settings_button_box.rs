@@ -43,9 +43,16 @@ pub(crate) fn render_button_box(
         screen_h,
     );
 
-    if let Some(c) = ch
-        && let Some(info) = renderer.glyph(queue, fonts, c, false, false)
-    {
+    let glyph_info = ch.and_then(|c| {
+        renderer.glyph(queue, fonts, c, false, false).or_else(|| {
+            if c == '\u{2212}' {
+                renderer.glyph(queue, fonts, '-', false, false)
+            } else {
+                None
+            }
+        })
+    });
+    if let Some(info) = glyph_info {
         let gx = x + (w - info.width) / 2.0;
         let gy = y + (h - info.height) / 2.0;
         let col = if is_hovered {

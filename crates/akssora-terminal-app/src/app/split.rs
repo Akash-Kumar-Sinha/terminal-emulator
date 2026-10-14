@@ -166,8 +166,9 @@ impl App {
             .unwrap_or((self.config.window.width, self.config.window.height));
         let show_sidebar = self.config.tab_layout.show_sidebar();
         let sb_w = self.sidebar.effective_width(show_sidebar);
-        let content_x = sb_w;
-        let content_w = (win_w as f32 - sb_w).max(0.0);
+        let exp_w = self.explorer.effective_width();
+        let content_x = sb_w + exp_w;
+        let content_w = (win_w as f32 - content_x).max(0.0);
         let top_h = self
             .header
             .total_height(self.config.tab_layout.includes_title_bar());

@@ -2,14 +2,7 @@ use akssora_terminal_config::Theme;
 use akssora_terminal_ui::{Header, HeaderItem};
 
 use crate::quad::{push_quad, push_rounded_rect};
-use crate::render_settings_teeth::render_gear_teeth;
 use crate::vertex::GlyphVertex;
-
-// INFO: Subtle zinc hover background and monochrome neutral accents for the settings button.
-const ZINC_HOVER_BG: [f32; 4] = [0.18, 0.18, 0.20, 0.85];
-const ZINC_ACTIVE_BG: [f32; 4] = [0.15, 0.15, 0.16, 0.90];
-const WHITE_ACCENT: [f32; 4] = [1.0, 1.0, 1.0, 0.95];
-const WHITE_FOCUS_RING: [f32; 4] = [0.70, 0.70, 0.70, 0.80];
 
 // INFO: Renders the minimal outline gear settings button with zinc hover and monochrome focus accent.
 pub fn render_settings_button(
@@ -29,9 +22,9 @@ pub fn render_settings_button(
     // 1. Button container background (completely transparent in default state)
     if is_hovered || is_focused || is_active {
         let bg_col = if is_active {
-            ZINC_ACTIVE_BG
+            theme.header_button_active_background
         } else {
-            ZINC_HOVER_BG
+            theme.header_button_hover_background
         };
         push_rounded_rect(
             verts,
@@ -48,7 +41,7 @@ pub fn render_settings_button(
         );
     }
 
-    // 2. Monochrome focus ring on keyboard focus
+    // 2. Focus ring on keyboard focus
     if is_focused {
         let ring_pad = 1.0;
         let rx0 = sx - ring_pad;
@@ -64,7 +57,7 @@ pub fn render_settings_button(
             ry0 + 1.0,
             solid_uv,
             solid_uv,
-            WHITE_FOCUS_RING,
+            theme.header_button_focus_ring,
             screen_w,
             screen_h,
         );
@@ -76,7 +69,7 @@ pub fn render_settings_button(
             ry1,
             solid_uv,
             solid_uv,
-            WHITE_FOCUS_RING,
+            theme.header_button_focus_ring,
             screen_w,
             screen_h,
         );
@@ -88,7 +81,7 @@ pub fn render_settings_button(
             ry1 - r,
             solid_uv,
             solid_uv,
-            WHITE_FOCUS_RING,
+            theme.header_button_focus_ring,
             screen_w,
             screen_h,
         );
@@ -100,76 +93,25 @@ pub fn render_settings_button(
             ry1 - r,
             solid_uv,
             solid_uv,
-            WHITE_FOCUS_RING,
+            theme.header_button_focus_ring,
             screen_w,
             screen_h,
         );
     }
 
-    // 3. Crisp outline-style gear icon (16x16 px, thin balanced 1.0 px strokes)
+    // 3. Crisp outline-style gear icon (16x16 px)
     let cx = (sx + sw * 0.5).round();
     let cy = (sy + sh * 0.5).round();
 
-    let stroke_col = if is_focused || is_active {
-        WHITE_ACCENT
-    } else if is_hovered {
+    let stroke_col = if is_focused || is_active || is_hovered {
         theme.text_primary
     } else {
         theme.text_secondary
     };
 
-    // Central circular hub ring (r = 2.5 px, hollow center)
-    push_quad(
-        verts,
-        cx - 1.5,
-        cy - 2.5,
-        cx + 1.5,
-        cy - 1.5,
-        solid_uv,
-        solid_uv,
-        stroke_col,
-        screen_w,
-        screen_h,
-    );
-    push_quad(
-        verts,
-        cx - 1.5,
-        cy + 1.5,
-        cx + 1.5,
-        cy + 2.5,
-        solid_uv,
-        solid_uv,
-        stroke_col,
-        screen_w,
-        screen_h,
-    );
-    push_quad(
-        verts,
-        cx - 2.5,
-        cy - 1.5,
-        cx - 1.5,
-        cy + 1.5,
-        solid_uv,
-        solid_uv,
-        stroke_col,
-        screen_w,
-        screen_h,
-    );
-    push_quad(
-        verts,
-        cx + 1.5,
-        cy - 1.5,
-        cx + 2.5,
-        cy + 1.5,
-        solid_uv,
-        solid_uv,
-        stroke_col,
-        screen_w,
-        screen_h,
-    );
-
-    // Cardinal, diagonal teeth and connecting outer rim segments
-    render_gear_teeth(verts, cx, cy, stroke_col, solid_uv, screen_w, screen_h);
+    let mut sink =
+        crate::icon_sink::VertexIconSink::new(verts, solid_uv, circle_uv, screen_w, screen_h);
+    akssora_icons::SettingsGearIcon::draw(&mut sink, cx, cy, stroke_col);
 }
 
 #[cfg(test)]
