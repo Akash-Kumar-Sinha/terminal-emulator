@@ -149,9 +149,35 @@ impl Header {
 
     // INFO: Bounding box for the center quick search bar in the header.
     pub fn quick_search_rect(&self, window_w: f32) -> (f32, f32, f32, f32) {
-        let sw = QUICK_SEARCH_WIDTH;
-        let sx = ((window_w - sw) * 0.5).max(120.0);
-        let sy = ((self.height - QUICK_SEARCH_HEIGHT) * 0.5).max(0.0);
+        let (bx, _, bw, _) = self.branding_rect_ex(true, true);
+        let left_limit = if self.is_git_repo {
+            let (br_x, _, br_w, _) = self.branch_button_rect(true, true);
+            if br_w > 0.0 {
+                br_x + br_w + 10.0
+            } else {
+                bx + bw + 10.0
+            }
+        } else {
+            bx + bw + 10.0
+        };
+
+        let right_limit = if self.is_git_repo {
+            let (cr_x, _, _, _) = self.code_review_button_rect(window_w);
+            if cr_x > 0.0 {
+                cr_x - 10.0
+            } else {
+                self.settings_button_rect(window_w).0 - 10.0
+            }
+        } else {
+            self.settings_button_rect(window_w).0 - 10.0
+        };
+
+        let max_w = (right_limit - left_limit).max(60.0);
+        let sw = QUICK_SEARCH_WIDTH.min(max_w).round();
+        let sx = ((window_w - sw) * 0.5)
+            .clamp(left_limit, (right_limit - sw).max(left_limit))
+            .round();
+        let sy = ((self.height - QUICK_SEARCH_HEIGHT) * 0.5).max(0.0).round();
         (sx, sy, sw, QUICK_SEARCH_HEIGHT)
     }
 
@@ -271,19 +297,20 @@ impl Header {
         let btn_h = 24.0;
         let spacing = 8.0;
 
-        let mut w = 26.0; // Left padding + 14px icon + padding
+        let mut w = 28.0; // Left padding + 14px icon + padding
         if additions > 0 || deletions > 0 {
             if additions > 0 {
                 let add_len = format!("+{additions}").len();
-                w += add_len as f32 * 8.5 + 4.0;
+                w += add_len as f32 * 9.5 + 4.0;
             }
             if additions > 0 && deletions > 0 {
                 w += 14.0; // "·" separator + padding
             }
             if deletions > 0 {
                 let del_len = format!("-{deletions}").len();
-                w += del_len as f32 * 8.5 + 4.0;
+                w += del_len as f32 * 9.5 + 4.0;
             }
+            w += 6.0;
         }
 
         let btn_w = w.max(34.0).round();

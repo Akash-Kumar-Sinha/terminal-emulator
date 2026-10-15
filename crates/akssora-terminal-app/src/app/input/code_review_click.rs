@@ -1,5 +1,4 @@
 use super::super::App;
-use akssora_terminal_ui::TabKind;
 
 // INFO: Mouse click routing and action handling for Code Review panel.
 impl App {
@@ -7,23 +6,50 @@ impl App {
         &mut self,
         mx: f32,
         my: f32,
-        w: f32,
-        h: f32,
-        top_h: f32,
-        ws_x: f32,
+        orig_w: f32,
+        orig_h: f32,
+        orig_top_h: f32,
+        orig_ws_x: f32,
     ) -> bool {
         // 4.5 Code Review interaction clicks
-        let is_code_review = self
-            .tab_manager
-            .active_tab()
-            .map(|t| matches!(t.kind, TabKind::CodeReview { .. }))
-            .unwrap_or(false);
-        if is_code_review && self.code_review.hovered_sidebar_edge {
+        if !self.is_code_review_open() {
+            return false;
+        }
+
+        let ws_w = (orig_w - orig_ws_x).max(0.0);
+        let ws_h = (orig_h - orig_top_h).max(0.0);
+
+        let (cr_x, cr_y, cr_w, cr_h) = if !self.code_review.is_full_view
+            && !self.active_tab_blocks().is_empty()
+        {
+            let total_w = (ws_w - akssora_terminal_ui::PaneTree::DIVIDER_THICKNESS).max(0.0);
+            let min_w = 120.0_f32.min(total_w * 0.45);
+            let ratio = self.code_review.split_ratio.clamp(0.15, 0.85);
+            let term_w = (total_w * (1.0 - ratio)).max(min_w).min(total_w - min_w);
+            let div_x = orig_ws_x + term_w;
+            let x = div_x + akssora_terminal_ui::PaneTree::DIVIDER_THICKNESS;
+            let width = (ws_w - term_w - akssora_terminal_ui::PaneTree::DIVIDER_THICKNESS).max(0.0);
+            (x, orig_top_h, width, ws_h)
+        } else {
+            (orig_ws_x, orig_top_h, ws_w, ws_h)
+        };
+
+        if mx < cr_x || mx > cr_x + cr_w || my < cr_y || my > cr_y + cr_h {
+            return false;
+        }
+        self.header.is_code_review_focused = true;
+
+        let ws_x = cr_x;
+        let top_h = cr_y;
+        let w = cr_x + cr_w;
+        let h = cr_y + cr_h;
+
+        if self.code_review.hovered_sidebar_edge {
             self.code_review.is_resizing_sidebar = true;
             return true;
         }
 
-        if is_code_review {
+        if true {
             let (vx, vy, vw, vh) = akssora_terminal_ui::CodeReviewLayout::diff_viewport_rect(
                 &self.code_review,
                 ws_x,
@@ -83,17 +109,15 @@ impl App {
             }
         }
 
-        if is_code_review
-            && let Some(action) = akssora_terminal_ui::CodeReviewLayout::hit_test(
-                &self.code_review,
-                ws_x,
-                top_h,
-                (w - ws_x).max(0.0),
-                (h - top_h).max(0.0),
-                mx,
-                my,
-            )
-        {
+        if let Some(action) = akssora_terminal_ui::CodeReviewLayout::hit_test(
+            &self.code_review,
+            ws_x,
+            top_h,
+            (w - ws_x).max(0.0),
+            (h - top_h).max(0.0),
+            mx,
+            my,
+        ) {
             match action {
                 akssora_terminal_ui::CodeReviewAction::SelectFile(idx) => {
                     self.code_review.select_file(idx);
@@ -147,17 +171,32 @@ impl App {
                             let line_h = akssora_terminal_ui::CodeReviewLayout::DIFF_LINE_HEIGHT;
                             let hunk_hdr_h =
                                 akssora_terminal_ui::CodeReviewLayout::UNMODIFIED_LINES_HEIGHT;
-                            let mut found_line = None;
+                            let mut found_row = None;
                             for hunk in &file.hunks {
                                 cur_y += hunk_hdr_h;
-                                for diff_line in &hunk.lines {
+                                for (l_idx, diff_line) in hunk.lines.iter().enumerate() {
                                     if click_y >= cur_y && click_y < cur_y + line_h {
-                                        found_line = Some(diff_line.clone());
+                                        let target = if let Some(n) = diff_line.new_line_num {
+                                            Some(n.saturating_sub(1))
+                                        } else {
+                                            // Deleted line: search forward then backward for nearest line with new_line_num
+                                            hunk.lines[l_idx..]
+                                                .iter()
+                                                .find_map(|l| l.new_line_num)
+                                                .or_else(|| {
+                                                    hunk.lines[..l_idx]
+                                                        .iter()
+                                                        .rev()
+                                                        .find_map(|l| l.new_line_num)
+                                                })
+                                                .map(|n| n.saturating_sub(1))
+                                        };
+                                        found_row = target;
                                         break;
                                     }
                                     cur_y += line_h;
                                 }
-                                if found_line.is_some() {
+                                if found_row.is_some() {
                                     break;
                                 }
                             }
@@ -169,45 +208,30 @@ impl App {
                                     .and_then(|l| l.new_line_num.or(l.old_line_num))
                                     .map(|n| n.saturating_sub(1))
                             });
-                            Some((found_line, first_hunk_target, file.path.clone()))
+                            Some((found_row, first_hunk_target, file.path.clone()))
                         } else {
                             None
                         };
 
-                        if let Some((found_line, first_hunk_target, _file_path)) = hit_info {
-                            if let Some(dl) = found_line {
-                                let target_line_opt = dl
-                                    .new_line_num
-                                    .or(dl.old_line_num)
-                                    .map(|n| n.saturating_sub(1));
-                                if let Some(curr_row) = target_line_opt {
-                                    let text_x = body_x + 48.0 + 8.0;
-                                    let col = if click_x < text_x {
-                                        0
-                                    } else {
-                                        ((click_x - text_x).max(0.0) / cell_w).round() as usize
-                                    };
-                                    if let Some(doc) = self.active_editor_mut() {
-                                        let line_len = doc.buffer.line_len(curr_row);
-                                        doc.cursor = (curr_row, col.min(line_len));
-                                        self.mouse_press_pos = Some((click_x, click_y));
-                                    }
-                                    if let Some(win) = self.window.as_ref() {
-                                        win.request_redraw();
-                                    }
-                                    return true;
-                                }
+                        if let Some((found_row, first_hunk_target, _file_path)) = hit_info {
+                            let curr_row = found_row.or(first_hunk_target).unwrap_or(0);
+                            let text_x = body_x + 48.0 + 8.0;
+                            let col = if click_x < text_x {
+                                0
                             } else {
-                                if let Some(doc) = self.active_editor_mut() {
-                                    let target_row = first_hunk_target.unwrap_or(0);
-                                    doc.cursor = (target_row, 0);
-                                    self.mouse_press_pos = Some((click_x, click_y));
-                                }
-                                if let Some(win) = self.window.as_ref() {
-                                    win.request_redraw();
-                                }
-                                return true;
+                                ((click_x - text_x).max(0.0) / cell_w).round() as usize
+                            };
+                            if let Some(doc) = self.active_editor_mut() {
+                                let total = doc.buffer.line_count();
+                                let safe_row = curr_row.min(total.saturating_sub(1));
+                                let line_len = doc.buffer.line_len(safe_row);
+                                doc.cursor = (safe_row, col.min(line_len));
+                                self.mouse_press_pos = Some((click_x, click_y));
                             }
+                            if let Some(win) = self.window.as_ref() {
+                                win.request_redraw();
+                            }
+                            return true;
                         }
                     }
 
@@ -253,30 +277,8 @@ impl App {
                     if let Some(file) = self.code_review.diff.files.get(idx) {
                         let path = file.path.clone();
                         let was_collapsed = self.code_review.is_file_collapsed(&path);
-                        self.code_review.toggle_file_collapsed(&path);
-                        if was_collapsed {
-                            self.ensure_editor_document_for_diff_file(idx);
-                            self.code_review.selected_file_idx = idx;
-                            self.prepare_code_review_editor_file(idx);
-                        } else if self.code_review.active_file_idx == Some(idx) {
-                            if let Some(other_idx) = self
-                                .code_review
-                                .diff
-                                .files
-                                .iter()
-                                .enumerate()
-                                .position(|(i, f)| {
-                                    i != idx && !self.code_review.is_file_collapsed(&f.path)
-                                })
-                            {
-                                self.prepare_code_review_editor_file(other_idx);
-                            } else {
-                                self.code_review.active_file_idx = None;
-                                self.code_review.active_editing_file = None;
-                            }
-                        }
 
-                        let (_, _, _, dvh) =
+                        let (_, vy, _, dvh) =
                             akssora_terminal_ui::CodeReviewLayout::diff_viewport_rect(
                                 &self.code_review,
                                 ws_x,
@@ -284,9 +286,31 @@ impl App {
                                 (w - ws_x).max(0.0),
                                 (h - top_h).max(0.0),
                             );
+                        let offset = self.code_review.card_y_offset_for_file(idx, dvh);
+                        let card_top = vy + offset - self.code_review.diff_scroll_y;
+
+                        self.code_review.toggle_file_collapsed(&path);
+                        if was_collapsed {
+                            self.ensure_editor_document_for_diff_file(idx);
+                            self.code_review.selected_file_idx = idx;
+                            self.prepare_code_review_editor_file(idx);
+                        } else {
+                            if self.code_review.active_file_idx == Some(idx) {
+                                self.code_review.active_file_idx = None;
+                                self.code_review.active_editing_file = None;
+                            }
+                            // Scroll anchoring: if the accordion was scrolled above viewport top
+                            // with its sticky header at the top (card_top < vy), keep its collapsed
+                            // header anchored at vy so the viewport does not jump.
+                            if card_top < vy {
+                                self.code_review.diff_scroll_y = offset;
+                            }
+                        }
+
                         let max_scroll = self.code_review.max_diff_scroll(dvh);
                         self.code_review.diff_scroll_y =
                             self.code_review.diff_scroll_y.clamp(0.0, max_scroll);
+                        self.sync_code_review_documents_scroll(dvh);
                     }
                 }
                 akssora_terminal_ui::CodeReviewAction::ToggleFullFile(idx) => {
@@ -388,7 +412,14 @@ impl App {
                     }
                 }
                 akssora_terminal_ui::CodeReviewAction::ClosePanel => {
-                    self.toggle_code_review();
+                    self.close_code_review();
+                }
+                akssora_terminal_ui::CodeReviewAction::ToggleExpandView => {
+                    self.code_review.toggle_full_view();
+                    self.layout_blocks();
+                    if let Some(win) = self.window.as_ref() {
+                        win.request_redraw();
+                    }
                 }
                 akssora_terminal_ui::CodeReviewAction::ToggleStaged => {
                     self.code_review.toggle_staged();
@@ -487,6 +518,119 @@ impl App {
                 }
                 akssora_terminal_ui::CodeReviewAction::SearchChangedFiles(q) => {
                     self.code_review.set_filter_query(q);
+                }
+                akssora_terminal_ui::CodeReviewAction::SelectTreeFile {
+                    is_staged,
+                    orig_idx: _,
+                    path,
+                } => {
+                    if self.code_review.is_staged != is_staged {
+                        self.code_review.toggle_staged();
+                        self.request_code_review_diff_reload();
+                    }
+                    if let Some(idx) = self
+                        .code_review
+                        .diff
+                        .files
+                        .iter()
+                        .position(|f| f.path == path)
+                    {
+                        self.code_review.collapsed_files.remove(&path);
+                        self.code_review.select_file(idx);
+                        self.prepare_code_review_editor_file(idx);
+                        let (_, _, _, dvh) =
+                            akssora_terminal_ui::CodeReviewLayout::diff_viewport_rect(
+                                &self.code_review,
+                                ws_x,
+                                top_h,
+                                (w - ws_x).max(0.0),
+                                (h - top_h).max(0.0),
+                            );
+                        let offset = self.code_review.card_y_offset_for_file(idx, dvh);
+                        let max_scroll = self.code_review.max_diff_scroll(dvh);
+                        if offset < self.code_review.diff_scroll_y
+                            || offset > self.code_review.diff_scroll_y + dvh
+                        {
+                            self.code_review.diff_scroll_y = offset.min(max_scroll).max(0.0);
+                        }
+                    }
+                }
+                akssora_terminal_ui::CodeReviewAction::ToggleSectionCollapse(is_staged) => {
+                    self.code_review.toggle_section_collapse(is_staged);
+                }
+                akssora_terminal_ui::CodeReviewAction::StageAll => {
+                    self.code_review.stage_all();
+                    self.invalidate_code_review_data(None);
+                }
+                akssora_terminal_ui::CodeReviewAction::UnstageAll => {
+                    self.code_review.unstage_all();
+                    self.invalidate_code_review_data(None);
+                }
+                akssora_terminal_ui::CodeReviewAction::PromptDiscardAll => {
+                    self.code_review.confirm_discard =
+                        Some(akssora_terminal_ui::DiscardTarget::All);
+                }
+                akssora_terminal_ui::CodeReviewAction::StageDirectoryByPath(path) => {
+                    self.code_review.stage_directory_by_path(&path);
+                    self.invalidate_code_review_data(None);
+                }
+                akssora_terminal_ui::CodeReviewAction::UnstageDirectoryByPath(path) => {
+                    self.code_review.unstage_directory_by_path(&path);
+                    self.invalidate_code_review_data(None);
+                }
+                akssora_terminal_ui::CodeReviewAction::PromptDiscardDirectory(path) => {
+                    self.code_review.confirm_discard =
+                        Some(akssora_terminal_ui::DiscardTarget::Directory(path));
+                }
+                akssora_terminal_ui::CodeReviewAction::StageFileByPath(path) => {
+                    self.code_review.stage_file_by_path(&path);
+                    self.invalidate_code_review_data(Some(&path));
+                }
+                akssora_terminal_ui::CodeReviewAction::UnstageFileByPath(path) => {
+                    self.code_review.unstage_file_by_path(&path);
+                    self.invalidate_code_review_data(Some(&path));
+                }
+                akssora_terminal_ui::CodeReviewAction::DiscardFileByPath(path) => {
+                    let full_path = self.code_review.repo_root.join(&path);
+                    self.editor_documents.remove(&full_path);
+                    self.code_review.discard_file_by_path(&path);
+                    self.invalidate_code_review_data(Some(&path));
+                }
+                akssora_terminal_ui::CodeReviewAction::PromptDiscardFile(path) => {
+                    self.code_review.confirm_discard =
+                        Some(akssora_terminal_ui::DiscardTarget::File(path));
+                }
+                akssora_terminal_ui::CodeReviewAction::ConfirmDiscardOk => {
+                    if let Some(target) = self.code_review.confirm_discard.take() {
+                        match target {
+                            akssora_terminal_ui::DiscardTarget::File(path) => {
+                                let full_path = self.code_review.repo_root.join(&path);
+                                self.editor_documents.remove(&full_path);
+                                self.code_review.discard_file_by_path(&path);
+                                self.invalidate_code_review_data(Some(&path));
+                            }
+                            akssora_terminal_ui::DiscardTarget::Directory(dir) => {
+                                let full_dir = self.code_review.repo_root.join(&dir);
+                                self.editor_documents
+                                    .retain(|p, _| !p.starts_with(&full_dir));
+                                self.code_review.discard_directory_by_path(&dir);
+                                self.invalidate_code_review_data(None);
+                            }
+                            akssora_terminal_ui::DiscardTarget::All => {
+                                self.editor_documents
+                                    .retain(|p, _| !p.starts_with(&self.code_review.repo_root));
+                                self.code_review.discard_all_changes();
+                                self.invalidate_code_review_data(None);
+                            }
+                        }
+                    }
+                }
+                akssora_terminal_ui::CodeReviewAction::ConfirmDiscardCancel => {
+                    self.code_review.confirm_discard = None;
+                }
+                akssora_terminal_ui::CodeReviewAction::OpenFileInEditorByPath(path) => {
+                    let full_path = self.code_review.repo_root.join(&path);
+                    self.open_editor_file(&full_path);
                 }
             }
             if let Some(win) = self.window.as_ref() {

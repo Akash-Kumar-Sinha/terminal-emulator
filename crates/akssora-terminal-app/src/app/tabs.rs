@@ -41,28 +41,54 @@ impl App {
     }
 
     pub fn sync_active_tab_state(&mut self) {
-        if let Some(tab) = self.tab_manager.active_tab() {
-            if matches!(tab.kind, TabKind::Settings) {
-                self.header.is_settings_active = true;
-                if self.explorer.is_expanded {
-                    self.explorer.is_expanded = false;
-                    self.header.is_explorer_expanded = false;
-                }
-            } else {
-                self.header.is_settings_active = false;
-            }
+        let (is_settings, code_review_repo) = if let Some(tab) = self.tab_manager.active_tab() {
+            let is_set = matches!(tab.kind, TabKind::Settings);
+            let cr_repo = match &tab.kind {
+                TabKind::CodeReview { repo_path } => Some(repo_path.clone()),
+                _ => None,
+            };
+            (is_set, cr_repo)
+        } else {
+            (false, None)
+        };
 
-            if matches!(tab.kind, TabKind::CodeReview { .. }) {
-                self.header.is_code_review_active = true;
-                self.ensure_code_review_documents();
-            } else {
-                self.header.is_code_review_active = false;
+        if is_settings {
+            self.header.is_settings_active = true;
+            if self.explorer.is_expanded {
+                self.explorer.is_expanded = false;
+                self.header.is_explorer_expanded = false;
+            }
+        } else {
+            self.header.is_settings_active = false;
+        }
+
+        if let Some(repo_path) = code_review_repo {
+            self.header.is_code_review_active = true;
+            let path = std::path::PathBuf::from(repo_path);
+            self.set_code_review_repo(&path);
+            self.ensure_code_review_documents();
+        } else if !self.is_code_review_open() {
+            self.header.is_code_review_active = false;
+        }
+    }
+
+    pub fn select_tab(&mut self, idx: usize) {
+        if idx < self.tab_manager.len() && self.tab_manager.active_index() != idx {
+            self.save_active_terminal_code_review();
+            self.tab_manager.select(idx);
+            self.load_active_terminal_code_review();
+            self.sync_active_tab_state();
+            self.layout_blocks();
+            if let Some(win) = self.window.as_ref() {
+                win.request_redraw();
             }
         }
     }
 
     pub fn next_tab(&mut self) {
+        self.save_active_terminal_code_review();
         self.tab_manager.next_tab();
+        self.load_active_terminal_code_review();
         self.sync_active_tab_state();
         self.layout_blocks();
         if let Some(win) = self.window.as_ref() {
@@ -71,7 +97,9 @@ impl App {
     }
 
     pub fn prev_tab(&mut self) {
+        self.save_active_terminal_code_review();
         self.tab_manager.prev_tab();
+        self.load_active_terminal_code_review();
         self.sync_active_tab_state();
         self.layout_blocks();
         if let Some(win) = self.window.as_ref() {
@@ -176,6 +204,7 @@ impl App {
     }
 
     pub fn open_terminal_tab_in(&mut self, cwd: Option<&std::path::Path>) -> u64 {
+        self.save_active_terminal_code_review();
         let count = self.tab_manager.len() + 1;
         let title = format!("Terminal {count}");
         let (rows, cols) = self.default_grid_dims();
@@ -193,6 +222,8 @@ impl App {
         );
         block.pane_id = Some(tab_id);
         self.blocks.insert(tab_id, block);
+        self.load_active_terminal_code_review();
+        self.sync_active_tab_state();
         self.layout_blocks();
         self.save_session_state();
         tab_id
@@ -415,12 +446,10 @@ impl App {
         if !self.editor_documents.contains_key(&path_buf) {
             let mut doc = if !path_buf.exists() {
                 let repo_root = self.code_review.repo_root.clone();
-                let matching_diff = self
-                    .code_review
-                    .diff
-                    .files
-                    .iter()
-                    .find(|f| repo_root.join(&f.path) == path_buf);
+                let matching_diff =
+                    self.code_review.diff.files.iter().find(|f| {
+                        repo_root.join(&f.path) == path_buf || path_buf.ends_with(&f.path)
+                    });
                 if let Ok(content) = akssora_git::GitInspector::file_deleted_content(
                     &repo_root,
                     &path_buf,
@@ -441,7 +470,13 @@ impl App {
             doc.line_number_mode = self.config.line_number_mode;
             doc.tab_size = self.config.tab_size;
             doc.line_height = self.config.line_height;
+            doc.vim_enabled = self.config.vim_mode;
             self.editor_documents.insert(path_buf.clone(), doc);
+        }
+
+        if let Some(doc) = self.editor_documents.get_mut(&path_buf) {
+            doc.inline_diff = false;
+            doc.vim_enabled = self.config.vim_mode;
         }
 
         let doc = self
@@ -457,8 +492,9 @@ impl App {
             .iter()
             .position(|t| matches!(&t.kind, TabKind::Editor { .. }))
         {
-            self.tab_manager.select(pos);
             let tab_id = self.tab_manager.tabs()[pos].id;
+            self.select_tab(pos);
+            self.split_manager.active_pane_id = Some(tab_id);
             if let Some(tab) = self.tab_manager.active_tab_mut() {
                 tab.title = title;
                 tab.kind = TabKind::Editor { path: path_str };
@@ -466,7 +502,6 @@ impl App {
             if let Some(doc_clone) = self.editor_documents.get(&path_buf).cloned() {
                 self.editors.insert(tab_id, doc_clone);
             }
-            self.split_manager.active_pane_id = Some(tab_id);
             self.header.is_code_review_active = false;
             self.layout_blocks();
             if let Some(win) = self.window.as_ref() {
@@ -476,6 +511,7 @@ impl App {
         }
 
         // Otherwise create new editor tab in tab_manager
+        self.save_active_terminal_code_review();
         let tab_id = self
             .tab_manager
             .add_tab(title, TabKind::Editor { path: path_str });
@@ -516,6 +552,7 @@ impl App {
                     self.command_buffers.remove(&pane_id);
                     self.last_executed_commands.remove(&pane_id);
                     self.pane_custom_names.remove(&pane_id);
+                    self.terminal_code_reviews.remove(&pane_id);
                     if let Some(mut block) = self.blocks.remove(&pane_id) {
                         block.shell.kill();
                     }
@@ -524,6 +561,7 @@ impl App {
             if let Some(mut block) = self.blocks.remove(&removed.id) {
                 block.shell.kill();
             }
+            self.terminal_code_reviews.remove(&removed.id);
             if self.tab_manager.is_empty() {
                 self.open_terminal_tab();
             } else {
@@ -537,6 +575,8 @@ impl App {
                         self.split_manager.active_pane_id = Some(active_id);
                     }
                 }
+                self.load_active_terminal_code_review();
+                self.sync_active_tab_state();
                 self.layout_blocks();
             }
             self.save_session_state();

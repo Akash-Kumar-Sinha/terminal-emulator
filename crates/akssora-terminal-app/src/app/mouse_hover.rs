@@ -367,55 +367,64 @@ impl App {
         }
 
         // 8. Track hover state for Code Review actions
-        let is_code_review = self
-            .tab_manager
-            .active_tab()
-            .map(|t| matches!(t.kind, TabKind::CodeReview { .. }))
-            .unwrap_or(false);
-        if is_code_review {
-            let ws_y = top_h;
-            let ws_w = (w - ws_x).max(100.0);
-            let ws_h = (h - ws_y).max(100.0);
+        let is_code_review = self.is_code_review_open();
+        if is_code_review && let Some((cr_x, cr_y, cr_w, cr_h)) = self.code_review_bounds() {
+            // Split divider hover check
+            if let Some((div_x, div_y, div_w, div_h)) = self.code_review_split_divider_rect() {
+                self.code_review.hovered_split_divider = mx >= div_x - 3.0
+                    && mx <= div_x + div_w + 3.0
+                    && my >= div_y
+                    && my <= div_y + div_h;
+            } else {
+                self.code_review.hovered_split_divider = false;
+            }
+
             if let Some((sbx, sby, sbw, _)) = akssora_terminal_ui::CodeReviewLayout::sidebar_rect(
                 &self.code_review,
-                ws_x,
-                ws_y,
-                ws_w,
-                ws_h,
+                cr_x,
+                cr_y,
+                cr_w,
+                cr_h,
             ) {
                 let on_edge = (mx - (sbx + sbw)).abs() <= 5.0 && my >= sby;
                 self.code_review.hovered_sidebar_edge = on_edge;
                 if self.code_review.is_resizing_sidebar {
-                    self.code_review.sidebar_width = (mx - sbx).clamp(180.0, ws_w * 0.6);
+                    self.code_review.sidebar_width = (mx - sbx).clamp(180.0, cr_w * 0.6);
                 }
             } else {
                 self.code_review.hovered_sidebar_edge = false;
             }
 
-            self.hovered_code_review_action = akssora_terminal_ui::CodeReviewLayout::hit_test(
-                &self.code_review,
-                ws_x,
-                ws_y,
-                ws_w,
-                ws_h,
-                mx,
-                my,
-            );
+            if mx >= cr_x && mx <= cr_x + cr_w && my >= cr_y && my <= cr_y + cr_h {
+                self.hovered_code_review_action = akssora_terminal_ui::CodeReviewLayout::hit_test(
+                    &self.code_review,
+                    cr_x,
+                    cr_y,
+                    cr_w,
+                    cr_h,
+                    mx,
+                    my,
+                );
 
-            let gutter_hover = akssora_terminal_ui::CodeReviewLayout::hit_test_gutter_hover(
-                &self.code_review,
-                ws_x,
-                ws_y,
-                ws_w,
-                ws_h,
-                mx,
-                my,
-            );
-            self.code_review.hovered_gutter = gutter_hover;
-            self.editor_hovered_gutter = gutter_hover.map(|h| (h.row, h.action));
+                let gutter_hover = akssora_terminal_ui::CodeReviewLayout::hit_test_gutter_hover(
+                    &self.code_review,
+                    cr_x,
+                    cr_y,
+                    cr_w,
+                    cr_h,
+                    mx,
+                    my,
+                );
+                self.code_review.hovered_gutter = gutter_hover;
+                self.editor_hovered_gutter = gutter_hover.map(|h| (h.row, h.action));
+            } else {
+                self.hovered_code_review_action = None;
+                self.code_review.hovered_gutter = None;
+            }
         } else {
             self.hovered_code_review_action = None;
             self.code_review.hovered_sidebar_edge = false;
+            self.code_review.hovered_split_divider = false;
             self.code_review.hovered_gutter = None;
         }
 
@@ -556,6 +565,8 @@ impl App {
             || self.explorer.hovered_edge
             || self.code_review.is_resizing_sidebar
             || self.code_review.hovered_sidebar_edge
+            || self.code_review.is_resizing_split
+            || self.code_review.hovered_split_divider
         {
             CursorIcon::ColResize
         } else if self.split_manager.pane_drag.is_some() {
@@ -567,6 +578,22 @@ impl App {
             }
         } else if self.is_button_hovered(mx, my, w, h, top_h) {
             CursorIcon::Pointer
+        } else if let Some(action) = &self.hovered_code_review_action
+            && matches!(
+                action,
+                akssora_terminal_ui::CodeReviewAction::ClickEditor { .. }
+            )
+        {
+            CursorIcon::Text
+        } else if self
+            .tab_manager
+            .active_tab()
+            .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::Editor { .. }))
+            .unwrap_or(false)
+            && my >= top_h
+            && mx >= sb_w + self.explorer.effective_width()
+        {
+            CursorIcon::Text
         } else if let Some(active_tab_id) = self.tab_manager.active_id()
             && let Some(tree) = self.split_trees.get(&active_tab_id)
         {

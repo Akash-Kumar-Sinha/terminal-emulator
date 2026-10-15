@@ -5,11 +5,167 @@ use super::App;
 
 // INFO: Code Review panel integration and terminal synchronization methods.
 impl App {
+    // INFO: Resolves the canonical repository or workspace root for any given directory or file path.
+    pub fn canonical_repo_root(path: &std::path::Path) -> std::path::PathBuf {
+        let repo_root = akssora_git::GitInspector::repo_root(path)
+            .or_else(|| {
+                // Fallback directory traversal to locate .git marker for mock / non-git environments
+                let mut curr = if path.is_file() {
+                    path.parent()
+                } else {
+                    Some(path)
+                };
+                while let Some(dir) = curr {
+                    if dir.join(".git").exists() {
+                        return Some(dir.to_path_buf());
+                    }
+                    curr = dir.parent();
+                }
+                None
+            })
+            .unwrap_or_else(|| path.to_path_buf());
+        std::fs::canonicalize(&repo_root).unwrap_or(repo_root)
+    }
+
+    // INFO: Returns the current canonical repository root for the active Code Review panel.
+    pub fn current_code_review_repo(&self) -> std::path::PathBuf {
+        Self::canonical_repo_root(&self.code_review.repo_root)
+    }
+
+    // INFO: Returns the unique identifier for the currently active terminal (pane or tab).
+    pub fn active_terminal_id(&self) -> Option<u64> {
+        let active_tab = self.tab_manager.active_tab()?;
+        if !matches!(
+            active_tab.kind,
+            akssora_terminal_ui::TabKind::Terminal { .. }
+        ) {
+            return None;
+        }
+        self.active_pane_id()
+    }
+
+    // INFO: Saves the active terminal's Code Review panel state into the per-terminal registry.
+    pub fn save_active_terminal_code_review(&mut self) {
+        if let Some(active_id) = self.active_terminal_id() {
+            self.terminal_code_reviews
+                .insert(active_id, self.code_review.clone());
+        }
+    }
+
+    // INFO: Restores the Code Review panel state for the currently active terminal tab or split pane.
+    pub fn load_active_terminal_code_review(&mut self) {
+        let Some(active_id) = self.active_terminal_id() else {
+            return;
+        };
+        let active_cwd = self.current_working_directory();
+        let canonical_root = Self::canonical_repo_root(&active_cwd);
+        let is_cwd_git = akssora_git::GitInspector::is_git_repo(&canonical_root)
+            || canonical_root.join(".git").exists();
+
+        if let Some(saved) = self.terminal_code_reviews.get(&active_id).cloned() {
+            self.code_review = saved;
+        } else {
+            let mut model = akssora_terminal_ui::CodeReviewModel::new(&canonical_root);
+            model.is_open = false;
+            model.is_full_view = false;
+            self.code_review = model;
+            if is_cwd_git {
+                self.request_code_review_diff_reload();
+            }
+        }
+
+        self.header.is_code_review_active = self.code_review.is_open;
+        if !self.code_review.is_open {
+            self.header.is_code_review_focused = false;
+        }
+        self.sync_header_git_state_for_active_terminal();
+    }
+
+    // INFO: Synchronizes Git branch and header statistics for the active terminal's context.
+    pub fn sync_header_git_state_for_active_terminal(&mut self) {
+        let active_cwd = self.current_working_directory();
+        let repo_root_opt = akssora_git::GitInspector::repo_root(&active_cwd).or_else(|| {
+            let mut curr = Some(active_cwd.as_path());
+            while let Some(dir) = curr {
+                if dir.join(".git").exists() {
+                    return Some(dir.to_path_buf());
+                }
+                curr = dir.parent();
+            }
+            None
+        });
+        let is_cwd_git = repo_root_opt.is_some()
+            || akssora_git::GitInspector::is_git_repo(&active_cwd)
+            || active_cwd.join(".git").exists();
+
+        let effective_repo = if self.code_review.is_open {
+            let cr_is_git = akssora_git::GitInspector::is_git_repo(&self.code_review.repo_root)
+                || self.code_review.repo_root.join(".git").exists();
+            if cr_is_git {
+                Some(self.code_review.repo_root.clone())
+            } else if is_cwd_git {
+                repo_root_opt.clone().or_else(|| Some(active_cwd.clone()))
+            } else {
+                None
+            }
+        } else if is_cwd_git {
+            repo_root_opt.clone().or_else(|| Some(active_cwd.clone()))
+        } else {
+            None
+        };
+
+        if let Some(ref repo_path) = effective_repo {
+            self.header.is_git_repo = true;
+            self.header.git_branch = akssora_git::GitInspector::current_branch(repo_path);
+            self.header.git_branches = akssora_git::GitInspector::list_branches(repo_path);
+
+            let staged_adds = self.code_review.staged_diff.total_additions;
+            let unstaged_adds = self.code_review.unstaged_diff.total_additions;
+            let total_adds = if staged_adds == 0 && unstaged_adds == 0 {
+                self.code_review.diff.total_additions
+            } else {
+                staged_adds + unstaged_adds
+            };
+
+            let staged_dels = self.code_review.staged_diff.total_deletions;
+            let unstaged_dels = self.code_review.unstaged_diff.total_deletions;
+            let total_dels = if staged_dels == 0 && unstaged_dels == 0 {
+                self.code_review.diff.total_deletions
+            } else {
+                staged_dels + unstaged_dels
+            };
+
+            self.header.git_additions = total_adds;
+            self.header.git_deletions = total_dels;
+        } else {
+            self.header.is_git_repo = false;
+            self.header.git_branch = None;
+            self.header.git_branches.clear();
+            self.header.branch_dropdown_open = false;
+            self.header.git_additions = 0;
+            self.header.git_deletions = 0;
+        }
+    }
+
     // INFO: Dispatches an asynchronous request to the background diff worker to refresh repository diff.
     pub fn request_code_review_diff_reload(&mut self) {
+        let terminal_id = self.tab_manager.active_id().unwrap_or(0);
+        let is_git = akssora_git::GitInspector::is_git_repo(&self.code_review.repo_root);
+        if !is_git {
+            if self.code_review.diff.files.is_empty() {
+                self.code_review.diff = akssora_git::RepoDiff::default();
+                self.code_review.staged_diff = akssora_git::RepoDiff::default();
+                self.code_review.unstaged_diff = akssora_git::RepoDiff::default();
+            }
+            self.code_review.is_loading = false;
+            self.sync_header_git_state_for_active_terminal();
+            return;
+        }
+
         self.code_review.is_loading = true;
         self.code_review.diff_generation += 1;
         self.diff_worker.send_request(DiffWorkerRequest {
+            terminal_id,
             generation: self.code_review.diff_generation,
             repo_root: self.code_review.repo_root.clone(),
             staged: self.code_review.is_staged,
@@ -18,17 +174,30 @@ impl App {
 
     // INFO: Polls non-blocking responses from background diff worker and updates the indexed immutable model on UI thread.
     pub fn poll_diff_worker(&mut self) {
-        if let Some(resp) = self.diff_worker.try_recv_response()
-            && resp.repo_root == self.code_review.repo_root
-            && resp.staged == self.code_review.is_staged
-        {
-            self.code_review
-                .set_indexed_diff(resp.diff, resp.generation);
-            self.ensure_code_review_documents();
-            self.header.git_additions = self.code_review.diff.total_additions;
-            self.header.git_deletions = self.code_review.diff.total_deletions;
-            if let Some(win) = self.window.as_ref() {
-                win.request_redraw();
+        let active_terminal_id = self.tab_manager.active_id().unwrap_or(0);
+        while let Some(resp) = self.diff_worker.try_recv_response() {
+            if resp.terminal_id == active_terminal_id
+                && resp.repo_root == self.code_review.repo_root
+                && resp.staged == self.code_review.is_staged
+                && resp.generation >= self.code_review.diff_generation
+            {
+                self.code_review.staged_diff = resp.staged_diff.repo_diff.clone();
+                self.code_review.unstaged_diff = resp.unstaged_diff.repo_diff.clone();
+                self.code_review
+                    .set_indexed_diff(resp.diff, resp.generation);
+                self.ensure_code_review_documents();
+                self.sync_header_git_state_for_active_terminal();
+                if let Some(win) = self.window.as_ref() {
+                    win.request_redraw();
+                }
+            } else if let Some(model) = self.terminal_code_reviews.get_mut(&resp.terminal_id)
+                && resp.repo_root == model.repo_root
+                && resp.staged == model.is_staged
+                && resp.generation >= model.diff_generation
+            {
+                model.staged_diff = resp.staged_diff.repo_diff.clone();
+                model.unstaged_diff = resp.unstaged_diff.repo_diff.clone();
+                model.set_indexed_diff(resp.diff, resp.generation);
             }
         }
     }
@@ -45,92 +214,270 @@ impl App {
         self.request_code_review_diff_reload();
     }
 
-    // INFO: Synchronizes Code Review model and header stats relative to the terminal's current directory.
+    // INFO: Synchronizes Code Review model and header stats relative to the terminal if directory changed.
     pub fn sync_code_review_with_active_terminal(&mut self) {
-        let target_dir = self.current_working_directory();
-        let repo_root_opt = akssora_git::GitInspector::repo_root(&target_dir);
-        self.header.is_git_repo = repo_root_opt.is_some();
-        if let Some(ref root) = repo_root_opt {
-            self.header.git_branch = akssora_git::GitInspector::current_branch(root);
-            self.header.git_branches = akssora_git::GitInspector::list_branches(root);
-        } else {
-            self.header.git_branch = None;
-            self.header.git_branches.clear();
-            self.header.branch_dropdown_open = false;
-        }
-
-        let is_code_review_tab = self
-            .tab_manager
-            .active_tab()
-            .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::CodeReview { .. }))
-            .unwrap_or(false);
-
-        if !is_code_review_tab {
-            let target_root = repo_root_opt.unwrap_or(target_dir);
-            if self.code_review.repo_root != target_root {
-                self.code_review = akssora_terminal_ui::CodeReviewModel::new(&target_root);
+        if let Some(tab) = self.tab_manager.active_tab() {
+            if matches!(tab.kind, akssora_terminal_ui::TabKind::CodeReview { .. }) {
+                self.sync_header_git_state_for_active_terminal();
+                return;
             }
         }
-        self.request_code_review_diff_reload();
-        self.header.git_additions = self.code_review.diff.total_additions;
-        self.header.git_deletions = self.code_review.diff.total_deletions;
-    }
+        let Some(active_cwd) = self.active_working_directory() else {
+            self.sync_header_git_state_for_active_terminal();
+            return;
+        };
+        let canonical_root = Self::canonical_repo_root(&active_cwd);
+        let is_git = akssora_git::GitInspector::is_git_repo(&canonical_root)
+            || canonical_root.join(".git").exists();
 
-    // INFO: Opens or creates a dedicated Code Review panel tab relative to the active terminal directory.
-    pub fn open_code_review(&mut self) {
-        self.sync_code_review_with_active_terminal();
-        self.ensure_code_review_documents();
-        if !self.code_review.diff.files.is_empty() {
-            self.prepare_code_review_editor_file(self.code_review.selected_file_idx);
-        }
-        let repo_root = self.code_review.repo_root.to_string_lossy().to_string();
-        let title = format!("Review: {}", self.code_review.branch);
-        let _ = self.tab_manager.add_tab(
-            title,
-            akssora_terminal_ui::TabKind::CodeReview {
-                repo_path: repo_root,
-            },
-        );
-        self.header.is_code_review_active = true;
-        if let Some(win) = self.window.as_ref() {
-            win.request_redraw();
-        }
-    }
-
-    // INFO: Toggles between Code Review panel and previous workspace tab.
-    pub fn toggle_code_review(&mut self) {
-        self.sync_code_review_with_active_terminal();
-        self.ensure_code_review_documents();
-        let is_active_review = self
-            .tab_manager
-            .active_tab()
-            .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::CodeReview { .. }))
-            .unwrap_or(false);
-
-        if is_active_review {
-            if let Some(first) = self.tab_manager.tabs().first() {
-                self.tab_manager.select_by_id(first.id);
+        if self.code_review.repo_root != canonical_root {
+            let was_open = self.code_review.is_open;
+            let was_full = self.code_review.is_full_view;
+            let mut model = akssora_terminal_ui::CodeReviewModel::new(&canonical_root);
+            model.is_open = was_open;
+            model.is_full_view = was_full;
+            self.code_review = model;
+            if is_git {
+                self.request_code_review_diff_reload();
+                if was_open {
+                    self.ensure_code_review_documents();
+                    if !self.code_review.diff.files.is_empty() {
+                        self.prepare_code_review_editor_file(self.code_review.selected_file_idx);
+                    }
+                }
+            } else {
+                self.code_review.diff = akssora_git::RepoDiff::default();
+                self.code_review.staged_diff = akssora_git::RepoDiff::default();
+                self.code_review.unstaged_diff = akssora_git::RepoDiff::default();
+                self.code_review.is_loading = false;
             }
-            self.header.is_code_review_active = false;
-        } else {
+        }
+        self.sync_header_git_state_for_active_terminal();
+    }
+
+    // INFO: Switches the active terminal's Code Review repository context.
+    pub fn set_code_review_repo(&mut self, repo_path: &std::path::Path) {
+        let target_root = Self::canonical_repo_root(repo_path);
+        let is_git = akssora_git::GitInspector::is_git_repo(&target_root)
+            || target_root.join(".git").exists();
+
+        if self.code_review.repo_root != target_root {
+            let old_root = self.code_review.repo_root.clone();
+            self.repo_code_reviews
+                .insert(old_root, self.code_review.clone());
+
+            let mut model = if let Some(saved) = self.repo_code_reviews.get(&target_root).cloned() {
+                saved
+            } else {
+                akssora_terminal_ui::CodeReviewModel::new(&target_root)
+            };
+            model.is_open = self.code_review.is_open;
+            model.is_full_view = self.code_review.is_full_view;
+            model.split_ratio = self.code_review.split_ratio;
+            self.code_review = model;
+        }
+
+        if is_git {
+            self.request_code_review_diff_reload();
+            self.ensure_code_review_documents();
             if !self.code_review.diff.files.is_empty() {
                 self.prepare_code_review_editor_file(self.code_review.selected_file_idx);
             }
-            if let Some(review_tab) = self
-                .tab_manager
-                .tabs()
-                .iter()
-                .find(|t| matches!(t.kind, akssora_terminal_ui::TabKind::CodeReview { .. }))
-            {
-                let tab_id = review_tab.id;
-                self.tab_manager.select_by_id(tab_id);
-            } else {
-                self.open_code_review();
-            }
-            self.header.is_code_review_active = true;
+        } else {
+            self.code_review.diff = akssora_git::RepoDiff::default();
+            self.code_review.staged_diff = akssora_git::RepoDiff::default();
+            self.code_review.unstaged_diff = akssora_git::RepoDiff::default();
+            self.code_review.is_loading = false;
         }
+
+        self.sync_header_git_state_for_active_terminal();
+        self.save_active_terminal_code_review();
         if let Some(win) = self.window.as_ref() {
             win.request_redraw();
+        }
+    }
+
+    // INFO: Checks whether the Code Review panel is currently open (in split view, full view, or review tab).
+    pub fn is_code_review_open(&self) -> bool {
+        let Some(active_tab) = self.tab_manager.active_tab() else {
+            return self.code_review.is_open;
+        };
+        match &active_tab.kind {
+            akssora_terminal_ui::TabKind::Terminal { .. } => self.code_review.is_open,
+            akssora_terminal_ui::TabKind::CodeReview { .. } => true,
+            _ => false,
+        }
+    }
+
+    // INFO: Returns the exact screen coordinates and size (x, y, w, h) for the Code Review panel.
+    pub fn code_review_bounds(&self) -> Option<(f32, f32, f32, f32)> {
+        if !self.is_code_review_open() {
+            return None;
+        }
+        let (win_w, win_h) = self
+            .state
+            .as_ref()
+            .map(|s| s.size())
+            .unwrap_or((self.config.window.width, self.config.window.height));
+        let show_tabs = self.config.tab_layout.includes_title_bar();
+        let top_h = self.header.total_height(show_tabs);
+        let show_sidebar = self.config.tab_layout.show_sidebar();
+        let sb_w = self.sidebar.effective_width(show_sidebar);
+        let exp_w = self.explorer.effective_width();
+        let ws_x = sb_w + exp_w;
+        let ws_y = top_h;
+        let ws_w = (win_w as f32 - ws_x).max(0.0);
+        let ws_h = (win_h as f32 - top_h).max(0.0);
+
+        let is_only_review_tab = self
+            .tab_manager
+            .active_tab()
+            .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::CodeReview { .. }))
+            .unwrap_or(false)
+            && self.active_tab_blocks().is_empty();
+
+        if self.code_review.is_full_view || is_only_review_tab {
+            Some((ws_x, ws_y, ws_w, ws_h))
+        } else {
+            let total_w = (ws_w - akssora_terminal_ui::PaneTree::DIVIDER_THICKNESS).max(0.0);
+            let min_w = 120.0_f32.min(total_w * 0.45);
+            let ratio = self.code_review.split_ratio.clamp(0.15, 0.85);
+            let term_w = (total_w * (1.0 - ratio)).max(min_w).min(total_w - min_w);
+            let cr_x = ws_x + term_w + akssora_terminal_ui::PaneTree::DIVIDER_THICKNESS;
+            let cr_w = (ws_w - term_w - akssora_terminal_ui::PaneTree::DIVIDER_THICKNESS).max(0.0);
+            Some((cr_x, ws_y, cr_w, ws_h))
+        }
+    }
+
+    // INFO: Returns the divider rect (x, y, w, h) between terminal and Code Review when in split view.
+    pub fn code_review_split_divider_rect(&self) -> Option<(f32, f32, f32, f32)> {
+        if !self.is_code_review_open() || self.code_review.is_full_view {
+            return None;
+        }
+        let (win_w, win_h) = self
+            .state
+            .as_ref()
+            .map(|s| s.size())
+            .unwrap_or((self.config.window.width, self.config.window.height));
+        let show_tabs = self.config.tab_layout.includes_title_bar();
+        let top_h = self.header.total_height(show_tabs);
+        let show_sidebar = self.config.tab_layout.show_sidebar();
+        let sb_w = self.sidebar.effective_width(show_sidebar);
+        let exp_w = self.explorer.effective_width();
+        let ws_x = sb_w + exp_w;
+        let ws_y = top_h;
+        let ws_w = (win_w as f32 - ws_x).max(0.0);
+        let ws_h = (win_h as f32 - top_h).max(0.0);
+
+        let total_w = (ws_w - akssora_terminal_ui::PaneTree::DIVIDER_THICKNESS).max(0.0);
+        let min_w = 120.0_f32.min(total_w * 0.45);
+        let ratio = self.code_review.split_ratio.clamp(0.15, 0.85);
+        let term_w = (total_w * (1.0 - ratio)).max(min_w).min(total_w - min_w);
+        Some((
+            ws_x + term_w,
+            ws_y,
+            akssora_terminal_ui::PaneTree::DIVIDER_THICKNESS,
+            ws_h,
+        ))
+    }
+
+    // INFO: Opens Code Review in a side-by-side split layout alongside the active terminal.
+    pub fn open_code_review(&mut self) {
+        let active_cwd = self.current_working_directory();
+        let canonical_root = Self::canonical_repo_root(&active_cwd);
+        let is_git = akssora_git::GitInspector::is_git_repo(&canonical_root)
+            || canonical_root.join(".git").exists();
+
+        if self.code_review.repo_root != canonical_root {
+            self.code_review = akssora_terminal_ui::CodeReviewModel::new(&canonical_root);
+        }
+        self.code_review.is_open = true;
+        self.code_review.is_full_view = false;
+        self.header.is_code_review_active = true;
+        self.header.is_code_review_focused = true;
+
+        if is_git {
+            self.request_code_review_diff_reload();
+            self.ensure_code_review_documents();
+            if !self.code_review.diff.files.is_empty() {
+                self.prepare_code_review_editor_file(self.code_review.selected_file_idx);
+            }
+        } else {
+            self.code_review.diff = akssora_git::RepoDiff::default();
+            self.code_review.staged_diff = akssora_git::RepoDiff::default();
+            self.code_review.unstaged_diff = akssora_git::RepoDiff::default();
+            self.code_review.is_loading = false;
+        }
+        self.sync_header_git_state_for_active_terminal();
+        self.save_active_terminal_code_review();
+        self.layout_blocks();
+        if let Some(win) = self.window.as_ref() {
+            win.request_redraw();
+        }
+    }
+
+    // INFO: Opens Code Review for a specific repository path without closing the panel.
+    pub fn open_code_review_for(&mut self, repo_path: &std::path::Path) {
+        let canonical_root = Self::canonical_repo_root(repo_path);
+        let is_git = akssora_git::GitInspector::is_git_repo(&canonical_root)
+            || canonical_root.join(".git").exists();
+
+        if self.code_review.repo_root != canonical_root {
+            let old_root = self.code_review.repo_root.clone();
+            self.repo_code_reviews
+                .insert(old_root, self.code_review.clone());
+
+            let model = if let Some(saved) = self.repo_code_reviews.get(&canonical_root).cloned() {
+                saved
+            } else {
+                akssora_terminal_ui::CodeReviewModel::new(&canonical_root)
+            };
+            self.code_review = model;
+        }
+        self.code_review.is_open = true;
+        self.code_review.is_full_view = false;
+        self.header.is_code_review_active = true;
+        self.header.is_code_review_focused = true;
+
+        if is_git {
+            self.request_code_review_diff_reload();
+            self.ensure_code_review_documents();
+            if !self.code_review.diff.files.is_empty() {
+                self.prepare_code_review_editor_file(self.code_review.selected_file_idx);
+            }
+        } else {
+            self.code_review.diff = akssora_git::RepoDiff::default();
+            self.code_review.staged_diff = akssora_git::RepoDiff::default();
+            self.code_review.unstaged_diff = akssora_git::RepoDiff::default();
+            self.code_review.is_loading = false;
+        }
+        self.sync_header_git_state_for_active_terminal();
+        self.save_active_terminal_code_review();
+        self.layout_blocks();
+        if let Some(win) = self.window.as_ref() {
+            win.request_redraw();
+        }
+    }
+
+    // INFO: Closes the Code Review panel and restores full terminal width.
+    pub fn close_code_review(&mut self) {
+        self.code_review.is_open = false;
+        self.header.is_code_review_active = false;
+        self.header.is_code_review_focused = false;
+        self.save_active_terminal_code_review();
+        self.sync_header_git_state_for_active_terminal();
+        self.layout_blocks();
+        if let Some(win) = self.window.as_ref() {
+            win.request_redraw();
+        }
+    }
+
+    // INFO: Toggles Code Review panel between open (split view) and closed.
+    pub fn toggle_code_review(&mut self) {
+        if self.is_code_review_open() {
+            self.close_code_review();
+        } else {
+            self.open_code_review();
         }
     }
 
@@ -250,22 +597,27 @@ impl App {
 
     // INFO: Synchronizes all expanded code review documents' internal scroll offsets with panel viewport position.
     pub fn sync_code_review_documents_scroll(&mut self, dvh: f32) {
-        let show_tabs = self.config.tab_layout.includes_title_bar();
-        let top_h = self.header.total_height(show_tabs);
-        let show_sidebar = self.config.tab_layout.show_sidebar();
-        let sb_w = self.sidebar.effective_width(show_sidebar);
-        let exp_w = self.explorer.effective_width();
-        let ws_x = sb_w + exp_w;
-        let ws_y = top_h;
-        let (win_w, win_h) = self.state.as_ref().map(|s| s.size()).unwrap_or((1200, 800));
-        let ws_w = (win_w as f32 - ws_x).max(100.0);
-        let ws_h = (win_h as f32 - ws_y).max(100.0);
+        let (cr_x, cr_y, cr_w, cr_h) = self.code_review_bounds().unwrap_or_else(|| {
+            let show_tabs = self.config.tab_layout.includes_title_bar();
+            let top_h = self.header.total_height(show_tabs);
+            let show_sidebar = self.config.tab_layout.show_sidebar();
+            let sb_w = self.sidebar.effective_width(show_sidebar);
+            let exp_w = self.explorer.effective_width();
+            let ws_x = sb_w + exp_w;
+            let (win_w, win_h) = self.state.as_ref().map(|s| s.size()).unwrap_or((1200, 800));
+            (
+                ws_x,
+                top_h,
+                (win_w as f32 - ws_x).max(100.0),
+                (win_h as f32 - top_h).max(100.0),
+            )
+        });
         let (_, vy, _, _) = akssora_terminal_ui::CodeReviewLayout::diff_viewport_rect(
             &self.code_review,
-            ws_x,
-            ws_y,
-            ws_w,
-            ws_h,
+            cr_x,
+            cr_y,
+            cr_w,
+            cr_h,
         );
         let cell_h = self.fonts.as_ref().map(|f| f.cell_h).unwrap_or(16.0);
         let mut cur_virtual_y = vy + 12.0;

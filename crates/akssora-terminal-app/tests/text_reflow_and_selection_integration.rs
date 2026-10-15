@@ -2,6 +2,9 @@ use akssora_terminal_app::App;
 use akssora_terminal_parser::TerminalParser;
 use akssora_terminal_screen::{SelectionRange, TerminalGrid, TerminalPoint};
 use akssora_terminal_ui::{ContextMenuAction, SplitDirection};
+use std::sync::Mutex;
+
+static CLIPBOARD_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
 #[test]
 fn test_ls_output_reflow_and_unwrapping() {
@@ -92,6 +95,9 @@ fn test_mouse_text_selection_single_and_multiline() {
 
 #[test]
 fn test_copy_and_paste_clipboard_integration() {
+    let _lock = CLIPBOARD_TEST_MUTEX
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let mut app = App::new();
     let tab_id = app.open_terminal_tab();
 
@@ -128,6 +134,9 @@ fn test_copy_and_paste_clipboard_integration() {
 
 #[test]
 fn test_context_menu_interaction() {
+    let _lock = CLIPBOARD_TEST_MUTEX
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let mut app = App::new();
     let tab_id = app.open_terminal_tab();
 
@@ -159,6 +168,9 @@ fn test_context_menu_interaction() {
 
 #[test]
 fn test_split_view_selection_and_reflow_isolation() {
+    let _lock = CLIPBOARD_TEST_MUTEX
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let mut app = App::new();
     let tab1_id = app.open_terminal_tab();
 
@@ -375,4 +387,120 @@ fn test_split_pane_text_selection_vs_drag_repositioning() {
 
     app.handle_test_mouse_release();
     assert!(app.split_manager.pane_drag.is_none());
+}
+
+#[test]
+fn test_terminal_auto_scroll_to_bottom_on_input_and_paste() {
+    let _lock = CLIPBOARD_TEST_MUTEX
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let mut app = App::new();
+    let tab_id = app.open_terminal_tab();
+
+    // Fill grid with 40 lines of text so scrollback is populated
+    if let Some(block) = app.get_block_mut(tab_id) {
+        let grid = block.shell.grid_mut();
+        for i in 0..40 {
+            let line = format!("Scrollback history entry #{:02}\r\n", i);
+            for ch in line.chars() {
+                if ch == '\n' {
+                    grid.newline();
+                } else if ch != '\r' {
+                    grid.put_char(ch);
+                }
+            }
+        }
+        assert!(grid.scrollback_len() > 0);
+        assert_eq!(grid.scroll_offset(), 0);
+    }
+
+    // 1. User scrolls upward to inspect history
+    let block = app.get_block_mut(tab_id).unwrap();
+    block.shell.scroll_up(15);
+    assert_eq!(block.shell.scroll_offset(), 15);
+
+    // 2. Terminal reset_scroll directly returns viewport to bottom
+    app.get_block_mut(tab_id).unwrap().shell.reset_scroll();
+    assert_eq!(
+        app.get_block(tab_id).unwrap().shell.scroll_offset(),
+        0,
+        "reset_scroll must return scroll offset to 0"
+    );
+
+    // 3. Scrolling up again, then pasting text via block.shell.paste_text
+    app.get_block_mut(tab_id).unwrap().shell.scroll_up(12);
+    assert_eq!(app.get_block(tab_id).unwrap().shell.scroll_offset(), 12);
+    app.get_block_mut(tab_id)
+        .unwrap()
+        .shell
+        .paste_text("cargo test\n");
+    assert_eq!(
+        app.get_block(tab_id).unwrap().shell.scroll_offset(),
+        0,
+        "Terminal::paste_text must auto-scroll viewport to bottom"
+    );
+
+    // 4. Scrolling up again, then pasting via paste_into_active
+    app.get_block_mut(tab_id).unwrap().shell.scroll_up(14);
+    assert_eq!(app.get_block(tab_id).unwrap().shell.scroll_offset(), 14);
+    akssora_terminal_input::set_clipboard_text("echo auto_scroll");
+    app.paste_into_active();
+    assert_eq!(
+        app.get_block(tab_id).unwrap().shell.scroll_offset(),
+        0,
+        "paste_into_active must auto-scroll viewport to bottom"
+    );
+
+    // 5. Normal scrollback navigation is preserved when only scrolling
+    app.get_block_mut(tab_id).unwrap().shell.scroll_up(10);
+    assert_eq!(app.get_block(tab_id).unwrap().shell.scroll_offset(), 10);
+    app.get_block_mut(tab_id).unwrap().shell.scroll_down(4);
+    assert_eq!(
+        app.get_block(tab_id).unwrap().shell.scroll_offset(),
+        6,
+        "Normal scrollback navigation must not be reset without user input"
+    );
+
+    // 6. Split view isolation: scrolling one pane does not alter other pane's scroll position
+    let split_id = app
+        .split_active_pane(SplitDirection::Vertical)
+        .expect("must create vertical split");
+
+    // Scroll pane 1 up
+    app.get_block_mut(tab_id).unwrap().shell.scroll_up(9);
+    assert_eq!(app.get_block(tab_id).unwrap().shell.scroll_offset(), 15);
+
+    // Populate split pane with lines so it has scrollback
+    if let Some(block) = app.get_block_mut(split_id) {
+        let grid = block.shell.grid_mut();
+        for i in 0..30 {
+            let line = format!("Split pane history entry #{:02}\r\n", i);
+            for ch in line.chars() {
+                if ch == '\n' {
+                    grid.newline();
+                } else if ch != '\r' {
+                    grid.put_char(ch);
+                }
+            }
+        }
+    }
+
+    // Scroll split pane (pane 2) up
+    app.get_block_mut(split_id).unwrap().shell.scroll_up(7);
+    assert_eq!(app.get_block(split_id).unwrap().shell.scroll_offset(), 7);
+
+    // Reset split pane scroll (e.g. on input)
+    app.get_block_mut(split_id).unwrap().shell.reset_scroll();
+
+    // Active split pane (pane 2) scrolled to bottom, while pane 1 preserved its scroll offset
+    assert_eq!(
+        app.get_block(split_id).unwrap().shell.scroll_offset(),
+        0,
+        "Active split pane must auto-scroll to bottom on reset"
+    );
+    assert_eq!(
+        app.get_block(tab_id).unwrap().shell.scroll_offset(),
+        15,
+        "Inactive pane's scroll position must remain preserved"
+    );
 }

@@ -48,18 +48,36 @@ pub enum CodeReviewSidebarMode {
 // INFO: Item in the changed files tree hierarchy.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CodeReviewTreeItem {
+    SectionHeader {
+        is_staged: bool,
+        count: usize,
+        is_collapsed: bool,
+    },
     Directory {
+        is_staged: bool,
         path: PathBuf,
         display_name: String,
         depth: usize,
         is_collapsed: bool,
     },
     File {
+        is_staged: bool,
         orig_idx: usize,
         path: PathBuf,
         display_name: String,
         depth: usize,
+        status: akssora_git::FileGitStatus,
+        additions: usize,
+        deletions: usize,
     },
+}
+
+// INFO: Target entity for destructive Git discard operations.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DiscardTarget {
+    File(PathBuf),
+    Directory(PathBuf),
+    All,
 }
 
 // INFO: Target interactable elements on the Code Review interface.
@@ -67,6 +85,11 @@ pub enum CodeReviewTreeItem {
 pub enum CodeReviewAction {
     SelectFile(usize),
     SelectFileForEdit(usize),
+    SelectTreeFile {
+        is_staged: bool,
+        orig_idx: usize,
+        path: PathBuf,
+    },
     ClickEditor {
         orig_idx: usize,
         click_x: f32,
@@ -77,14 +100,27 @@ pub enum CodeReviewAction {
     },
     SaveFile(usize),
     ToggleSidebarMode,
+    ToggleSectionCollapse(bool),
     ToggleTreeDir(PathBuf),
     ToggleSidebar,
     ToggleDiffMode,
     ToggleStaged,
     Refresh,
+    StageAll,
+    UnstageAll,
+    PromptDiscardAll,
+    StageDirectoryByPath(PathBuf),
+    UnstageDirectoryByPath(PathBuf),
+    PromptDiscardDirectory(PathBuf),
     StageFile(usize),
     UnstageFile(usize),
     DiscardFile(usize),
+    StageFileByPath(PathBuf),
+    UnstageFileByPath(PathBuf),
+    DiscardFileByPath(PathBuf),
+    PromptDiscardFile(PathBuf),
+    ConfirmDiscardOk,
+    ConfirmDiscardCancel,
     OpenCommitDialog,
     CloseCommitDialog,
     SubmitCommit,
@@ -104,7 +140,9 @@ pub enum CodeReviewAction {
     },
     CopyFilePath(usize),
     OpenFileInEditor(usize),
+    OpenFileInEditorByPath(PathBuf),
     ClosePanel,
+    ToggleExpandView,
     OpenCommentInput {
         file_idx: usize,
         line_idx: usize,

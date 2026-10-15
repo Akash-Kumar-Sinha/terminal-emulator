@@ -172,3 +172,180 @@ pub fn render_commit_dialog(
         screen_h,
     );
 }
+
+// INFO: Renders modal confirmation dialog when discarding unstaged file changes.
+#[allow(clippy::too_many_arguments)]
+pub fn render_discard_dialog(
+    renderer: &mut GlyphRenderer,
+    queue: &wgpu::Queue,
+    fonts: &FontManager,
+    ui_fonts: &FontManager,
+    theme: &Theme,
+    target: &akssora_terminal_ui::DiscardTarget,
+    ws_x: f32,
+    ws_y: f32,
+    ws_w: f32,
+    ws_h: f32,
+    verts: &mut Vec<GlyphVertex>,
+    solid_uv: [f32; 2],
+    circle_uv: [[f32; 2]; 2],
+    screen_w: f32,
+    screen_h: f32,
+) {
+    // Backdrop dimming
+    push_quad(
+        verts,
+        ws_x,
+        ws_y,
+        ws_x + ws_w,
+        ws_y + ws_h,
+        solid_uv,
+        solid_uv,
+        theme.modal_backdrop,
+        screen_w,
+        screen_h,
+    );
+
+    let (modal_x, modal_y, modal_w, modal_h) =
+        akssora_terminal_ui::CodeReviewLayout::discard_dialog_rect(ws_x, ws_y, ws_w, ws_h);
+    let (cancel_rect, confirm_rect) =
+        akssora_terminal_ui::CodeReviewLayout::discard_dialog_buttons_rect(ws_x, ws_y, ws_w, ws_h);
+
+    // Modal Card
+    push_rounded_rect(
+        verts,
+        modal_x,
+        modal_y,
+        modal_x + modal_w,
+        modal_y + modal_h,
+        8.0,
+        circle_uv,
+        solid_uv,
+        theme.modal_card_background,
+        screen_w,
+        screen_h,
+    );
+
+    let (dialog_title, prompt_msg) = match target {
+        akssora_terminal_ui::DiscardTarget::File(path) => {
+            let filename = path
+                .file_name()
+                .map(|n| n.to_string_lossy())
+                .unwrap_or_default();
+            (
+                "Discard File Changes?".to_string(),
+                format!("Discard all unstaged changes in \"{filename}\"?"),
+            )
+        }
+        akssora_terminal_ui::DiscardTarget::Directory(dir) => (
+            "Discard Folder Changes?".to_string(),
+            format!("Discard all unstaged changes in \"{}\"?", dir.display()),
+        ),
+        akssora_terminal_ui::DiscardTarget::All => (
+            "Discard All Changes?".to_string(),
+            "Discard all unstaged changes in the repository?".to_string(),
+        ),
+    };
+
+    // Dialog Header Title
+    renderer.render_text(
+        queue,
+        ui_fonts,
+        verts,
+        &dialog_title,
+        modal_x + 20.0,
+        modal_y + 18.0,
+        modal_w - 40.0,
+        theme.text_primary,
+        false,
+        screen_w,
+        screen_h,
+    );
+
+    // Confirmation Body Text
+    renderer.render_text(
+        queue,
+        fonts,
+        verts,
+        &prompt_msg,
+        modal_x + 20.0,
+        modal_y + 52.0,
+        modal_w - 40.0,
+        theme.text_secondary,
+        false,
+        screen_w,
+        screen_h,
+    );
+
+    renderer.render_text(
+        queue,
+        ui_fonts,
+        verts,
+        "This operation is destructive and cannot be undone.",
+        modal_x + 20.0,
+        modal_y + 78.0,
+        modal_w - 40.0,
+        theme.danger_foreground,
+        false,
+        screen_w,
+        screen_h,
+    );
+
+    // Cancel Button
+    push_rounded_rect(
+        verts,
+        cancel_rect.0,
+        cancel_rect.1,
+        cancel_rect.0 + cancel_rect.2,
+        cancel_rect.1 + cancel_rect.3,
+        4.0,
+        circle_uv,
+        solid_uv,
+        theme.modal_cancel_button_background,
+        screen_w,
+        screen_h,
+    );
+    let cancel_text_w = 46.0;
+    renderer.render_text(
+        queue,
+        ui_fonts,
+        verts,
+        "Cancel",
+        cancel_rect.0 + (cancel_rect.2 - cancel_text_w) * 0.5,
+        cancel_rect.1 + (cancel_rect.3 - ui_fonts.cell_h) * 0.5,
+        cancel_rect.2,
+        theme.text_primary,
+        false,
+        screen_w,
+        screen_h,
+    );
+
+    // Confirm Discard Button (Destructive action)
+    push_rounded_rect(
+        verts,
+        confirm_rect.0,
+        confirm_rect.1,
+        confirm_rect.0 + confirm_rect.2,
+        confirm_rect.1 + confirm_rect.3,
+        4.0,
+        circle_uv,
+        solid_uv,
+        theme.modal_danger_button_background,
+        screen_w,
+        screen_h,
+    );
+    let discard_text_w = 48.0;
+    renderer.render_text(
+        queue,
+        ui_fonts,
+        verts,
+        "Discard",
+        confirm_rect.0 + (confirm_rect.2 - discard_text_w) * 0.5,
+        confirm_rect.1 + (confirm_rect.3 - ui_fonts.cell_h) * 0.5,
+        confirm_rect.2,
+        theme.text_primary,
+        false,
+        screen_w,
+        screen_h,
+    );
+}

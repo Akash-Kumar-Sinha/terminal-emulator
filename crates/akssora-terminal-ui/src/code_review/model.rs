@@ -5,7 +5,8 @@ use akssora_git::{FileDiff, GitInspector, RepoDiff};
 
 use super::layout::CodeReviewLayout;
 use super::types::{
-    CodeReviewGutterHover, CodeReviewSidebarMode, CodeReviewTreeItem, DiffViewMode, ReviewComment,
+    CodeReviewGutterHover, CodeReviewSidebarMode, CodeReviewTreeItem, DiffViewMode, DiscardTarget,
+    ReviewComment,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -13,6 +14,8 @@ pub struct CodeReviewModel {
     pub repo_root: PathBuf,
     pub branch: String,
     pub diff: RepoDiff,
+    pub staged_diff: RepoDiff,
+    pub unstaged_diff: RepoDiff,
     pub is_staged: bool,
     pub selected_file_idx: usize,
     pub collapsed_files: std::collections::HashSet<PathBuf>,
@@ -22,6 +25,9 @@ pub struct CodeReviewModel {
     pub sidebar_width: f32,
     pub sidebar_mode: CodeReviewSidebarMode,
     pub collapsed_tree_dirs: std::collections::HashSet<PathBuf>,
+    pub staged_collapsed: bool,
+    pub unstaged_collapsed: bool,
+    pub confirm_discard: Option<DiscardTarget>,
     pub is_resizing_sidebar: bool,
     pub hovered_sidebar_edge: bool,
     pub active_file_idx: Option<usize>,
@@ -43,6 +49,11 @@ pub struct CodeReviewModel {
     pub is_loading: bool,
     pub diff_generation: u64,
     pub hovered_gutter: Option<CodeReviewGutterHover>,
+    pub is_open: bool,
+    pub is_full_view: bool,
+    pub split_ratio: f32,
+    pub is_resizing_split: bool,
+    pub hovered_split_divider: bool,
     pub(crate) cached_total_diff_h: Cell<Option<f32>>,
     pub(crate) cached_tree_items: RefCell<Option<Vec<CodeReviewTreeItem>>>,
 }
@@ -53,6 +64,8 @@ impl Default for CodeReviewModel {
             repo_root: PathBuf::from("."),
             branch: "main".to_string(),
             diff: RepoDiff::default(),
+            staged_diff: RepoDiff::default(),
+            unstaged_diff: RepoDiff::default(),
             is_staged: false,
             selected_file_idx: 0,
             collapsed_files: std::collections::HashSet::new(),
@@ -62,6 +75,9 @@ impl Default for CodeReviewModel {
             sidebar_width: 260.0,
             sidebar_mode: CodeReviewSidebarMode::Tree,
             collapsed_tree_dirs: std::collections::HashSet::new(),
+            staged_collapsed: false,
+            unstaged_collapsed: false,
+            confirm_discard: None,
             is_resizing_sidebar: false,
             hovered_sidebar_edge: false,
             active_file_idx: None,
@@ -83,6 +99,11 @@ impl Default for CodeReviewModel {
             is_loading: false,
             diff_generation: 0,
             hovered_gutter: None,
+            is_open: false,
+            is_full_view: false,
+            split_ratio: 0.5,
+            is_resizing_split: false,
+            hovered_split_divider: false,
             cached_total_diff_h: Cell::new(None),
             cached_tree_items: RefCell::new(None),
         }
@@ -90,6 +111,16 @@ impl Default for CodeReviewModel {
 }
 
 impl CodeReviewModel {
+    pub fn toggle_full_view(&mut self) {
+        self.is_full_view = !self.is_full_view;
+        self.invalidate_layout();
+    }
+
+    pub fn set_split_ratio(&mut self, ratio: f32) {
+        self.split_ratio = ratio.clamp(0.15, 0.85);
+        self.invalidate_layout();
+    }
+
     pub fn invalidate_layout(&self) {
         self.cached_total_diff_h.set(None);
         self.cached_tree_items.borrow_mut().take();
@@ -127,13 +158,18 @@ impl CodeReviewModel {
             GitInspector::repo_root(&repo_path).unwrap_or_else(|| repo_path.as_ref().to_path_buf());
         let branch =
             GitInspector::current_branch(&repo_root).unwrap_or_else(|| "detached".to_string());
-        let indexed = akssora_git::load_repo_diff_indexed(&repo_root, false);
-        let diff = indexed.repo_diff.clone();
+        let staged_indexed = akssora_git::load_repo_diff_indexed(&repo_root, true);
+        let unstaged_indexed = akssora_git::load_repo_diff_indexed(&repo_root, false);
+        let staged_diff = staged_indexed.repo_diff.clone();
+        let unstaged_diff = unstaged_indexed.repo_diff.clone();
+        let diff = unstaged_diff.clone();
 
         let mut model = Self {
             repo_root,
             branch,
             diff,
+            staged_diff,
+            unstaged_diff,
             is_staged: false,
             selected_file_idx: 0,
             collapsed_files: std::collections::HashSet::new(),
@@ -143,6 +179,9 @@ impl CodeReviewModel {
             sidebar_width: 260.0,
             sidebar_mode: CodeReviewSidebarMode::Tree,
             collapsed_tree_dirs: std::collections::HashSet::new(),
+            staged_collapsed: false,
+            unstaged_collapsed: false,
+            confirm_discard: None,
             is_resizing_sidebar: false,
             hovered_sidebar_edge: false,
             active_file_idx: None,
@@ -160,10 +199,15 @@ impl CodeReviewModel {
             is_dragging_diff_scrollbar: false,
             diff_scrollbar_drag_start_y: 0.0,
             diff_scrollbar_drag_start_scroll: 0.0,
-            indexed_diff: Some(std::sync::Arc::new(indexed)),
+            indexed_diff: Some(std::sync::Arc::new(unstaged_indexed)),
             is_loading: false,
             diff_generation: 1,
             hovered_gutter: None,
+            is_open: false,
+            is_full_view: false,
+            split_ratio: 0.5,
+            is_resizing_split: false,
+            hovered_split_divider: false,
             cached_total_diff_h: Cell::new(None),
             cached_tree_items: RefCell::new(None),
         };
@@ -177,9 +221,17 @@ impl CodeReviewModel {
         self.invalidate_layout();
         self.branch =
             GitInspector::current_branch(&self.repo_root).unwrap_or_else(|| "detached".to_string());
-        let indexed = akssora_git::load_repo_diff_indexed(&self.repo_root, self.is_staged);
+        let staged_indexed = akssora_git::load_repo_diff_indexed(&self.repo_root, true);
+        let unstaged_indexed = akssora_git::load_repo_diff_indexed(&self.repo_root, false);
+        self.staged_diff = staged_indexed.repo_diff.clone();
+        self.unstaged_diff = unstaged_indexed.repo_diff.clone();
         let next_gen = self.diff_generation + 1;
-        self.set_indexed_diff(std::sync::Arc::new(indexed), next_gen);
+        let active = if self.is_staged {
+            staged_indexed
+        } else {
+            unstaged_indexed
+        };
+        self.set_indexed_diff(std::sync::Arc::new(active), next_gen);
         if self.selected_file_idx >= self.diff.files.len() {
             self.selected_file_idx = self.diff.files.len().saturating_sub(1);
         }
@@ -202,6 +254,15 @@ impl CodeReviewModel {
         };
     }
 
+    pub fn toggle_section_collapse(&mut self, is_staged: bool) {
+        self.cached_tree_items.borrow_mut().take();
+        if is_staged {
+            self.staged_collapsed = !self.staged_collapsed;
+        } else {
+            self.unstaged_collapsed = !self.unstaged_collapsed;
+        }
+    }
+
     pub fn toggle_tree_dir(&mut self, dir: PathBuf) {
         self.cached_tree_items.borrow_mut().take();
         if self.collapsed_tree_dirs.contains(&dir) {
@@ -211,77 +272,109 @@ impl CodeReviewModel {
         }
     }
 
-    // INFO: Flattens hierarchical changed files into visible tree rows respecting directory collapses.
+    // INFO: Flattens hierarchical changed files into visible tree rows with separate Staged/Changes sections and compact folders.
     pub fn visible_tree_items(&self) -> Vec<CodeReviewTreeItem> {
         if let Some(items) = self.cached_tree_items.borrow().as_ref() {
             return items.clone();
         }
 
-        let filtered = self.filtered_files();
-        if self.sidebar_mode == CodeReviewSidebarMode::FlatList {
-            let items: Vec<CodeReviewTreeItem> = filtered
-                .into_iter()
-                .map(|(orig_idx, file)| CodeReviewTreeItem::File {
-                    orig_idx,
-                    path: file.path.clone(),
-                    display_name: file.path.to_string_lossy().to_string(),
-                    depth: 0,
-                })
-                .collect();
-            *self.cached_tree_items.borrow_mut() = Some(items.clone());
-            return items;
+        // Determine staged and unstaged file collections
+        let (raw_staged, raw_unstaged) = if self.staged_diff.files.is_empty()
+            && self.unstaged_diff.files.is_empty()
+            && !self.diff.files.is_empty()
+        {
+            if self.is_staged {
+                (&self.diff.files, &self.unstaged_diff.files)
+            } else {
+                (&self.staged_diff.files, &self.diff.files)
+            }
+        } else {
+            (&self.staged_diff.files, &self.unstaged_diff.files)
+        };
+
+        let filter = self.filter_query.to_lowercase();
+        let staged_filtered: Vec<(usize, &FileDiff)> = raw_staged
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| {
+                filter.is_empty() || f.path.to_string_lossy().to_lowercase().contains(&filter)
+            })
+            .collect();
+
+        let unstaged_filtered: Vec<(usize, &FileDiff)> = raw_unstaged
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| {
+                filter.is_empty() || f.path.to_string_lossy().to_lowercase().contains(&filter)
+            })
+            .collect();
+
+        if !akssora_git::GitInspector::is_git_repo(&self.repo_root) {
+            *self.cached_tree_items.borrow_mut() = Some(Vec::new());
+            return Vec::new();
         }
 
-        let mut sorted_files: Vec<(usize, &FileDiff)> = filtered;
-        sorted_files.sort_by(|a, b| a.1.path.cmp(&b.1.path));
-
         let mut items = Vec::new();
-        let mut emitted_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
 
-        for (orig_idx, file) in sorted_files {
-            let path = &file.path;
-            let mut ancestors = Vec::new();
-            let mut curr = path.parent();
-            while let Some(parent) = curr {
-                if parent.as_os_str().is_empty() {
-                    break;
-                }
-                ancestors.push(parent.to_path_buf());
-                curr = parent.parent();
-            }
-            ancestors.reverse();
+        // 1. Staged Changes Section Header
+        items.push(CodeReviewTreeItem::SectionHeader {
+            is_staged: true,
+            count: staged_filtered.len(),
+            is_collapsed: self.staged_collapsed,
+        });
 
-            let mut any_ancestor_collapsed = false;
-            for (depth, ancestor) in ancestors.iter().enumerate() {
-                let is_collapsed = self.collapsed_tree_dirs.contains(ancestor);
-                if !any_ancestor_collapsed && emitted_dirs.insert(ancestor.clone()) {
-                    let dir_name = ancestor
-                        .file_name()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_else(|| ancestor.to_string_lossy().to_string());
-                    items.push(CodeReviewTreeItem::Directory {
-                        path: ancestor.clone(),
-                        display_name: dir_name,
-                        depth,
-                        is_collapsed,
+        if !self.staged_collapsed {
+            if self.sidebar_mode == CodeReviewSidebarMode::FlatList {
+                for (orig_idx, file) in &staged_filtered {
+                    items.push(CodeReviewTreeItem::File {
+                        is_staged: true,
+                        orig_idx: *orig_idx,
+                        path: file.path.clone(),
+                        display_name: file.path.to_string_lossy().to_string(),
+                        depth: 1,
+                        status: file.status,
+                        additions: file.additions,
+                        deletions: file.deletions,
                     });
                 }
-                if is_collapsed {
-                    any_ancestor_collapsed = true;
-                }
+            } else {
+                build_section_tree_items(
+                    true,
+                    &staged_filtered,
+                    &self.collapsed_tree_dirs,
+                    &mut items,
+                );
             }
+        }
 
-            if !any_ancestor_collapsed {
-                let file_name = path
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| path.to_string_lossy().to_string());
-                items.push(CodeReviewTreeItem::File {
-                    orig_idx,
-                    path: path.clone(),
-                    display_name: file_name,
-                    depth: ancestors.len(),
-                });
+        // 2. Changes (Unstaged) Section Header
+        items.push(CodeReviewTreeItem::SectionHeader {
+            is_staged: false,
+            count: unstaged_filtered.len(),
+            is_collapsed: self.unstaged_collapsed,
+        });
+
+        if !self.unstaged_collapsed {
+            if self.sidebar_mode == CodeReviewSidebarMode::FlatList {
+                for (orig_idx, file) in &unstaged_filtered {
+                    items.push(CodeReviewTreeItem::File {
+                        is_staged: false,
+                        orig_idx: *orig_idx,
+                        path: file.path.clone(),
+                        display_name: file.path.to_string_lossy().to_string(),
+                        depth: 1,
+                        status: file.status,
+                        additions: file.additions,
+                        deletions: file.deletions,
+                    });
+                }
+            } else {
+                build_section_tree_items(
+                    false,
+                    &unstaged_filtered,
+                    &self.collapsed_tree_dirs,
+                    &mut items,
+                );
             }
         }
 
@@ -409,24 +502,69 @@ impl CodeReviewModel {
         }
     }
 
+    pub fn stage_file_by_path(&mut self, path: &Path) {
+        let _ = GitInspector::stage_file(&self.repo_root, path);
+        self.refresh();
+    }
+
+    pub fn unstage_file_by_path(&mut self, path: &Path) {
+        let _ = GitInspector::unstage_file(&self.repo_root, path);
+        self.refresh();
+    }
+
+    pub fn discard_file_by_path(&mut self, path: &Path) {
+        let _ = GitInspector::discard_file_changes(&self.repo_root, path);
+        self.refresh();
+    }
+
+    pub fn stage_directory_by_path(&mut self, dir: &Path) {
+        let _ = GitInspector::stage_directory(&self.repo_root, dir);
+        self.refresh();
+    }
+
+    pub fn unstage_directory_by_path(&mut self, dir: &Path) {
+        let _ = GitInspector::unstage_directory(&self.repo_root, dir);
+        self.refresh();
+    }
+
+    pub fn discard_directory_by_path(&mut self, dir: &Path) {
+        let _ = GitInspector::discard_directory_changes(&self.repo_root, dir);
+        self.refresh();
+    }
+
+    pub fn stage_all(&mut self) {
+        let _ = GitInspector::stage_all(&self.repo_root);
+        self.refresh();
+    }
+
+    pub fn unstage_all(&mut self) {
+        let _ = GitInspector::unstage_all(&self.repo_root);
+        self.refresh();
+    }
+
+    pub fn discard_all_changes(&mut self) {
+        let _ = GitInspector::discard_all_changes(&self.repo_root);
+        self.refresh();
+    }
+
     pub fn stage_file_at(&mut self, idx: usize) {
         if let Some(file) = self.diff.files.get(idx) {
-            let _ = GitInspector::stage_file(&self.repo_root, &file.path);
-            self.refresh();
+            let path = file.path.clone();
+            self.stage_file_by_path(&path);
         }
     }
 
     pub fn unstage_file_at(&mut self, idx: usize) {
         if let Some(file) = self.diff.files.get(idx) {
-            let _ = GitInspector::unstage_file(&self.repo_root, &file.path);
-            self.refresh();
+            let path = file.path.clone();
+            self.unstage_file_by_path(&path);
         }
     }
 
     pub fn discard_file_at(&mut self, idx: usize) {
         if let Some(file) = self.diff.files.get(idx) {
-            let _ = GitInspector::discard_file_changes(&self.repo_root, &file.path);
-            self.refresh();
+            let path = file.path.clone();
+            self.discard_file_by_path(&path);
         }
     }
 
@@ -551,6 +689,128 @@ impl CodeReviewModel {
         let max_sb = self.max_sidebar_scroll(sidebar_viewport_h);
         self.sidebar_scroll_y = self.sidebar_scroll_y.clamp(0.0, max_sb);
     }
+}
+
+#[derive(Default)]
+struct DirTreeNode {
+    name: String,
+    path: PathBuf,
+    subdirs: std::collections::BTreeMap<String, DirTreeNode>,
+    files: Vec<(
+        usize,
+        PathBuf,
+        String,
+        akssora_git::FileGitStatus,
+        usize,
+        usize,
+    )>,
+}
+
+impl DirTreeNode {
+    fn compact(&mut self) {
+        for child in self.subdirs.values_mut() {
+            child.compact();
+        }
+        for child in self.subdirs.values_mut() {
+            while child.files.is_empty() && child.subdirs.len() == 1 {
+                let (_grandchild_key, grandchild) = child.subdirs.pop_first().unwrap();
+                child.name = format!("{}/{}", child.name, grandchild.name);
+                child.path = grandchild.path;
+                child.files = grandchild.files;
+                child.subdirs = grandchild.subdirs;
+            }
+        }
+    }
+
+    fn flatten(
+        &self,
+        is_staged: bool,
+        depth: usize,
+        collapsed_dirs: &std::collections::HashSet<PathBuf>,
+        items: &mut Vec<CodeReviewTreeItem>,
+    ) {
+        for child in self.subdirs.values() {
+            let is_collapsed = collapsed_dirs.contains(&child.path);
+            items.push(CodeReviewTreeItem::Directory {
+                is_staged,
+                path: child.path.clone(),
+                display_name: child.name.clone(),
+                depth,
+                is_collapsed,
+            });
+            if !is_collapsed {
+                child.flatten(is_staged, depth + 1, collapsed_dirs, items);
+            }
+        }
+        for (orig_idx, path, display_name, status, additions, deletions) in &self.files {
+            items.push(CodeReviewTreeItem::File {
+                is_staged,
+                orig_idx: *orig_idx,
+                path: path.clone(),
+                display_name: display_name.clone(),
+                depth,
+                status: *status,
+                additions: *additions,
+                deletions: *deletions,
+            });
+        }
+    }
+}
+
+fn sort_node_files_recursive(node: &mut DirTreeNode) {
+    node.files.sort_by(|a, b| a.2.cmp(&b.2));
+    for child in node.subdirs.values_mut() {
+        sort_node_files_recursive(child);
+    }
+}
+
+fn build_section_tree_items(
+    is_staged: bool,
+    files: &[(usize, &FileDiff)],
+    collapsed_dirs: &std::collections::HashSet<PathBuf>,
+    items: &mut Vec<CodeReviewTreeItem>,
+) {
+    let mut root = DirTreeNode::default();
+    for (orig_idx, file) in files {
+        let path = &file.path;
+        let components: Vec<_> = path
+            .components()
+            .filter(|c| c.as_os_str() != ".")
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .collect();
+        if components.is_empty() {
+            continue;
+        }
+        let file_name = components.last().unwrap().clone();
+        let dir_parts = &components[..components.len() - 1];
+
+        let mut curr = &mut root;
+        let mut curr_path = PathBuf::new();
+        for part in dir_parts {
+            curr_path.push(part);
+            curr = curr
+                .subdirs
+                .entry(part.clone())
+                .or_insert_with(|| DirTreeNode {
+                    name: part.clone(),
+                    path: curr_path.clone(),
+                    subdirs: std::collections::BTreeMap::new(),
+                    files: Vec::new(),
+                });
+        }
+        curr.files.push((
+            *orig_idx,
+            path.clone(),
+            file_name,
+            file.status,
+            file.additions,
+            file.deletions,
+        ));
+    }
+    sort_node_files_recursive(&mut root);
+
+    root.compact();
+    root.flatten(is_staged, 1, collapsed_dirs, items);
 }
 
 #[cfg(test)]

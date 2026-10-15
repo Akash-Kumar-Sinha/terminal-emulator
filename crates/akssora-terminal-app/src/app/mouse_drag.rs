@@ -49,6 +49,30 @@ impl App {
             return;
         }
 
+        // 0.9 Handle Code Review split divider dragging
+        if self.code_review.is_resizing_split {
+            let (win_w, _) = self
+                .state
+                .as_ref()
+                .map(|s| s.size())
+                .unwrap_or((self.config.window.width, self.config.window.height));
+            let show_sidebar = self.config.tab_layout.show_sidebar();
+            let sb_w = self.sidebar.effective_width(show_sidebar);
+            let exp_w = self.explorer.effective_width();
+            let ws_x = sb_w + exp_w;
+            let ws_w = (win_w as f32 - ws_x).max(100.0);
+            let total_w = (ws_w - akssora_terminal_ui::PaneTree::DIVIDER_THICKNESS).max(10.0);
+
+            let new_term_w = (mx - ws_x).clamp(120.0, total_w - 120.0);
+            let new_cr_w = total_w - new_term_w;
+            let new_ratio = (new_cr_w / total_w).clamp(0.15, 0.85);
+            self.code_review.set_split_ratio(new_ratio);
+            self.layout_blocks();
+            if let Some(win) = self.window.as_ref() {
+                win.request_redraw();
+            }
+        }
+
         // 1. Handle divider dragging
         if let Some(drag) = self.split_manager.drag_state.clone() {
             let active_tab_id = drag.tab_id;
@@ -160,6 +184,7 @@ impl App {
         if let Some((px, py)) = self.mouse_press_pos {
             let dist = (mx - px).hypot(my - py);
             let not_other_drag = !self.sidebar.is_resizing
+                && !self.code_review.is_resizing_split
                 && self.split_manager.drag_state.is_none()
                 && self.split_manager.pane_drag.is_none()
                 && !self.editor_v_scrollbar.is_dragging
@@ -176,18 +201,16 @@ impl App {
                     .as_ref()
                     .map(|f| (f.cell_w, f.cell_h))
                     .unwrap_or((8.0, 16.0));
-                let is_code_review = self
-                    .tab_manager
-                    .active_tab()
-                    .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::CodeReview { .. }))
-                    .unwrap_or(false);
-                let cr_body_rect = if is_code_review {
+                let is_code_review = self.is_code_review_open();
+                let cr_body_rect = if is_code_review
+                    && let Some((cr_x, cr_y, cr_w, cr_h)) = self.code_review_bounds()
+                {
                     akssora_terminal_ui::CodeReviewLayout::active_card_body_rect(
                         &self.code_review,
-                        ws_x,
-                        top_h,
-                        (w - ws_x).max(100.0),
-                        (h - top_h).max(100.0),
+                        cr_x,
+                        cr_y,
+                        cr_w,
+                        cr_h,
                     )
                 } else {
                     None

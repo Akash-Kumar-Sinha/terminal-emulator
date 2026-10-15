@@ -1,5 +1,3 @@
-use akssora_terminal_ui::TabKind;
-
 use crate::app::App;
 
 impl App {
@@ -13,11 +11,7 @@ impl App {
         sb_w: f32,
     ) -> bool {
         // INFO: Editor workspace and file-tab bar interaction
-        let is_code_review = self
-            .tab_manager
-            .active_tab()
-            .map(|t| matches!(t.kind, TabKind::CodeReview { .. }))
-            .unwrap_or(false);
+        let is_code_review = self.is_code_review_open();
         let exp_w = self.explorer.effective_width();
         let ws_x = sb_w + exp_w;
         let ws_w = (w - ws_x).max(0.0);

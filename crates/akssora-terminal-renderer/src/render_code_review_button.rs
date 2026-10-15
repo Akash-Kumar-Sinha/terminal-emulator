@@ -225,7 +225,7 @@ pub fn render_code_review_header_button(
     verts: &mut Vec<GlyphVertex>,
     theme: &Theme,
     header: &Header,
-    code_review: Option<&CodeReviewModel>,
+    _code_review: Option<&CodeReviewModel>,
     solid_uv: [f32; 2],
     circle_uv: [[f32; 2]; 2],
     screen_w: f32,
@@ -235,11 +235,7 @@ pub fn render_code_review_header_button(
         return;
     }
 
-    let (additions, deletions) = if let Some(cr) = code_review {
-        (cr.diff.total_additions, cr.diff.total_deletions)
-    } else {
-        (0, 0)
-    };
+    let (additions, deletions) = (header.git_additions, header.git_deletions);
     let has_stats = additions > 0 || deletions > 0;
     let (bx, by, bw, bh) = header.code_review_button_rect(screen_w);
     if bw <= 0.0 {
@@ -283,7 +279,11 @@ pub fn render_code_review_header_button(
         theme.text_secondary
     };
 
-    let icon_x = bx + 6.0;
+    let icon_x = if has_stats {
+        bx + 8.0
+    } else {
+        (bx + (bw - akssora_icons::CodeReviewDiffIcon::SIZE) * 0.5).round()
+    };
     let icon_y = by + (bh - akssora_icons::CodeReviewDiffIcon::SIZE) * 0.5;
 
     let mut sink =
@@ -292,7 +292,7 @@ pub fn render_code_review_header_button(
 
     let cell_h = fonts.cell_h;
     let text_y = by + (bh - cell_h) * 0.5;
-    let mut curr_x = icon_x + 14.0;
+    let mut curr_x = icon_x + akssora_icons::CodeReviewDiffIcon::SIZE + 6.0;
 
     // 3. Stats badges: additions (+N in green) and deletions (-N in red)
     if has_stats {

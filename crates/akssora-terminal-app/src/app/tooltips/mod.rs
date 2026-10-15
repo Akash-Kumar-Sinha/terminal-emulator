@@ -44,11 +44,7 @@ impl App {
             .map(|t| matches!(t.kind, TabKind::Editor { .. }))
             .unwrap_or(false);
 
-        let is_code_review = self
-            .tab_manager
-            .active_tab()
-            .map(|t| matches!(t.kind, TabKind::CodeReview { .. }))
-            .unwrap_or(false);
+        let is_code_review = self.is_code_review_open();
 
         // 1. Header Buttons & Tabs
         self.active_tooltip = header::check_header_tooltip(self, hovered_item, window_w);

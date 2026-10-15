@@ -127,6 +127,9 @@ impl ApplicationHandler for App {
                         any_output = true;
                     }
                 }
+                if any_output {
+                    self.sync_code_review_with_active_terminal();
+                }
 
                 // Check closed terminal sessions
                 let closed_ids: Vec<u64> = self
@@ -191,22 +194,13 @@ impl ApplicationHandler for App {
                     self.refresh_git_status();
                 }
                 let file_tabs = self.collect_editor_file_tabs();
-                let is_code_review = self
-                    .tab_manager
-                    .active_tab()
-                    .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::CodeReview { .. }))
-                    .unwrap_or(false);
+                let is_code_review = self.is_code_review_open();
                 let is_editor = self
                     .tab_manager
                     .active_tab()
                     .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::Editor { .. }))
                     .unwrap_or(false);
-                let active_editor = if is_code_review {
-                    self.code_review
-                        .active_editing_file
-                        .as_ref()
-                        .and_then(|p| self.editor_documents.get(p))
-                } else if is_editor {
+                let active_editor = if is_editor {
                     if let Some(p) = &self.editor_active_file {
                         self.editor_documents.get(p)
                     } else if let Some(active_id) = self.tab_manager.active_id() {
@@ -214,6 +208,19 @@ impl ApplicationHandler for App {
                     } else {
                         None
                     }
+                } else if is_code_review {
+                    self.code_review
+                        .active_editing_file
+                        .as_ref()
+                        .and_then(|p| self.editor_documents.get(p))
+                        .or_else(|| {
+                            self.code_review
+                                .diff
+                                .files
+                                .get(self.code_review.selected_file_idx)
+                                .map(|f| self.code_review.repo_root.join(&f.path))
+                                .and_then(|p| self.editor_documents.get(&p))
+                        })
                 } else {
                     None
                 };

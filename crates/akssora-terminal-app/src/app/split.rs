@@ -80,6 +80,8 @@ impl App {
             orig_block.pane_id = Some(active_tab_id);
         }
 
+        self.save_active_terminal_code_review();
+
         let tree = self
             .split_trees
             .entry(active_tab_id)
@@ -87,6 +89,7 @@ impl App {
 
         tree.split_leaf(focused_pane_id, new_pane_id, direction);
         self.split_manager.focus_pane(new_pane_id);
+        self.load_active_terminal_code_review();
 
         self.layout_blocks();
         self.save_session_state();
@@ -150,7 +153,12 @@ impl App {
                 && my >= block.y
                 && my <= block.y + block.height as f32
             {
-                self.split_manager.focus_pane(id);
+                if self.split_manager.active_pane_id != Some(id) {
+                    self.save_active_terminal_code_review();
+                    self.split_manager.focus_pane(id);
+                    self.load_active_terminal_code_review();
+                    self.layout_blocks();
+                }
                 return true;
             }
         }
@@ -177,10 +185,26 @@ impl App {
 
         let fonts = self.fonts.as_ref();
 
+        let is_cr_open = self.is_code_review_open();
+        if is_cr_open && self.code_review.is_full_view {
+            // In full view, Code Review occupies the entire area; preserve existing terminal geometry
+            return;
+        }
+
+        let (term_x, term_w) = if is_cr_open {
+            let total_w = (content_w - akssora_terminal_ui::PaneTree::DIVIDER_THICKNESS).max(0.0);
+            let min_w = 120.0_f32.min(total_w * 0.45);
+            let ratio = self.code_review.split_ratio.clamp(0.15, 0.85);
+            let tw = (total_w * (1.0 - ratio)).max(min_w).min(total_w - min_w);
+            (content_x, tw)
+        } else {
+            (content_x, content_w)
+        };
+
         for tab in self.tab_manager.tabs() {
             let tab_id = tab.id;
             if let Some(tree) = self.split_trees.get(&tab_id) {
-                let rects = tree.compute_rects(content_x, content_y, content_w, content_h);
+                let rects = tree.compute_rects(term_x, content_y, term_w, content_h);
                 for (pane_id, px, py, pw, ph) in rects {
                     if let Some(block) = self.blocks.get_mut(&pane_id) {
                         block.x = px;
@@ -198,16 +222,16 @@ impl App {
                     }
                 }
             } else if let Some(block) = self.blocks.get_mut(&tab_id) {
-                block.x = content_x;
+                block.x = term_x;
                 block.y = content_y;
-                block.width = content_w as u32;
+                block.width = term_w as u32;
                 block.height = content_h as u32;
                 block
                     .scrollbar
-                    .update_geometry(content_x, content_y, content_w, content_h);
+                    .update_geometry(term_x, content_y, term_w, content_h);
 
                 let (rows, cols) = if let Some(f) = fonts {
-                    grid_dims(content_w as u32, content_h as u32, f)
+                    grid_dims(term_w as u32, content_h as u32, f)
                 } else {
                     (24, 80)
                 };
@@ -287,10 +311,12 @@ impl App {
         self.command_buffers.remove(&pane_id);
         self.last_executed_commands.remove(&pane_id);
         self.pane_custom_names.remove(&pane_id);
+        self.terminal_code_reviews.remove(&pane_id);
         if let Some(mut block) = self.blocks.remove(&pane_id) {
             block.shell.kill();
         }
 
+        self.load_active_terminal_code_review();
         self.layout_blocks();
         self.save_session_state();
         if let Some(win) = self.window.as_ref() {
@@ -309,7 +335,10 @@ impl App {
                 let current = self.split_manager.active_pane_id.unwrap_or(active_id);
                 if let Some(pos) = leaves.iter().position(|&id| id == current) {
                     let next_pos = (pos + 1) % leaves.len();
+                    self.save_active_terminal_code_review();
                     self.split_manager.focus_pane(leaves[next_pos]);
+                    self.load_active_terminal_code_review();
+                    self.layout_blocks();
                     if let Some(win) = self.window.as_ref() {
                         win.request_redraw();
                     }
@@ -329,7 +358,10 @@ impl App {
                 let current = self.split_manager.active_pane_id.unwrap_or(active_id);
                 if let Some(pos) = leaves.iter().position(|&id| id == current) {
                     let prev_pos = if pos == 0 { leaves.len() - 1 } else { pos - 1 };
+                    self.save_active_terminal_code_review();
                     self.split_manager.focus_pane(leaves[prev_pos]);
+                    self.load_active_terminal_code_review();
+                    self.layout_blocks();
                     if let Some(win) = self.window.as_ref() {
                         win.request_redraw();
                     }

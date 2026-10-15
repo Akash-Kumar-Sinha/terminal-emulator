@@ -381,54 +381,77 @@ impl App {
 
     // INFO: Retrieves the document model for the currently active tab if it is an editor tab or Code Review active file.
     pub fn active_editor(&self) -> Option<&akssora_editor::Document> {
-        let is_code_review = self
-            .tab_manager
-            .active_tab()
-            .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::CodeReview { .. }))
-            .unwrap_or(false);
-        if is_code_review && let Some(p) = &self.code_review.active_editing_file {
-            return self.editor_documents.get(p);
-        }
-
-        let is_editor = self
+        let is_editor_tab = self
             .tab_manager
             .active_tab()
             .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::Editor { .. }))
             .unwrap_or(false);
-        if !is_editor || self.editor_open_files.is_empty() {
-            return None;
+        if is_editor_tab {
+            if self.editor_open_files.is_empty() {
+                return None;
+            }
+            if let Some(p) = &self.editor_active_file {
+                return self.editor_documents.get(p);
+            }
+            let active_id = self.tab_manager.active_id()?;
+            return self.editors.get(&active_id);
         }
-        if let Some(p) = &self.editor_active_file {
-            return self.editor_documents.get(p);
+
+        let is_code_review = self.is_code_review_open();
+        if is_code_review {
+            if let Some(p) = &self.code_review.active_editing_file {
+                return self.editor_documents.get(p);
+            }
+            if let Some(file) = self
+                .code_review
+                .diff
+                .files
+                .get(self.code_review.selected_file_idx)
+            {
+                let full_path = self.code_review.repo_root.join(&file.path);
+                return self.editor_documents.get(&full_path);
+            }
         }
-        let active_id = self.tab_manager.active_id()?;
-        self.editors.get(&active_id)
+
+        None
     }
 
     // INFO: Retrieves a mutable reference to the active editor document.
     pub fn active_editor_mut(&mut self) -> Option<&mut akssora_editor::Document> {
-        let is_code_review = self
-            .tab_manager
-            .active_tab()
-            .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::CodeReview { .. }))
-            .unwrap_or(false);
-        if is_code_review && let Some(p) = self.code_review.active_editing_file.clone() {
-            return self.editor_documents.get_mut(&p);
-        }
-
-        let is_editor = self
+        let is_editor_tab = self
             .tab_manager
             .active_tab()
             .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::Editor { .. }))
             .unwrap_or(false);
-        if !is_editor || self.editor_open_files.is_empty() {
-            return None;
+        if is_editor_tab {
+            if self.editor_open_files.is_empty() {
+                return None;
+            }
+            if let Some(p) = self.editor_active_file.clone() {
+                return self.editor_documents.get_mut(&p);
+            }
+            let active_id = self.tab_manager.active_id()?;
+            return self.editors.get_mut(&active_id);
         }
-        if let Some(p) = self.editor_active_file.clone() {
-            return self.editor_documents.get_mut(&p);
+
+        let is_code_review = self.is_code_review_open();
+        if is_code_review {
+            if let Some(p) = self.code_review.active_editing_file.clone() {
+                return self.editor_documents.get_mut(&p);
+            }
+            let sel_idx = self.code_review.selected_file_idx;
+            if sel_idx < self.code_review.diff.files.len() {
+                self.ensure_editor_document_for_diff_file(sel_idx);
+                if let Some(file) = self.code_review.diff.files.get(sel_idx) {
+                    let full_path = self.code_review.repo_root.join(&file.path);
+                    self.code_review.active_editing_file = Some(full_path.clone());
+                    self.code_review.active_file_idx = Some(sel_idx);
+                    return self.editor_documents.get_mut(&full_path);
+                }
+            }
         }
-        let active_id = self.tab_manager.active_id()?;
-        self.editors.get_mut(&active_id)
+
+        None
     }
 
     // INFO: Formats the active Markdown editor document using configured formatter and workspace config.
@@ -504,31 +527,28 @@ impl App {
             0.0
         };
 
-        let is_code_review = self
-            .tab_manager
-            .active_tab()
-            .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::CodeReview { .. }))
-            .unwrap_or(false);
+        let is_code_review = self.is_code_review_open();
 
         let (src_x, src_y, src_w, editor_content_h) = if is_code_review {
-            let show_tabs = self.config.tab_layout.includes_title_bar();
-            let top_h = self.header.total_height(show_tabs);
+            let (cr_x, cr_y, cr_w, cr_h) = self
+                .code_review_bounds()
+                .unwrap_or((ws_x, ws_y, ws_w, ws_h));
             if let Some((bx, by, bw, bh)) =
                 akssora_terminal_ui::CodeReviewLayout::active_card_body_rect(
                     &self.code_review,
-                    ws_x,
-                    top_h,
-                    ws_w,
-                    ws_h,
+                    cr_x,
+                    cr_y,
+                    cr_w,
+                    cr_h,
                 )
             {
                 (bx, by, bw, bh)
             } else {
                 (
-                    ws_x,
-                    ws_y + tab_bar_h,
-                    ws_w,
-                    (ws_h - tab_bar_h - 22.0).max(0.0),
+                    cr_x,
+                    cr_y + tab_bar_h,
+                    cr_w,
+                    (cr_h - tab_bar_h - 22.0).max(0.0),
                 )
             }
         } else {

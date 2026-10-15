@@ -5,7 +5,7 @@ use winit::keyboard::{Key, NamedKey};
 use crate::app::App;
 
 impl App {
-    pub(crate) fn handle_shell_input(&mut self, event: &KeyEvent, ctrl: bool) {
+    pub fn handle_shell_input(&mut self, event: &KeyEvent, ctrl: bool) {
         // 4. Track command buffer for automatic session naming and EOF detection
         if let Some(target_pane_id) = self.active_pane_id() {
             let active_tab_id = self.tab_manager.active_id();
@@ -44,6 +44,7 @@ impl App {
         if let Some(bytes) = encode_key(event, self.modifiers)
             && let Some(block) = self.active_block_mut()
         {
+            block.shell.reset_scroll();
             block.shell.send(&bytes);
             if let Some(win) = self.window.as_ref() {
                 win.request_redraw();

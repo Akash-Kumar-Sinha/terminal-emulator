@@ -85,6 +85,8 @@ pub struct App {
     pub pending_chord: Option<(String, std::time::Instant)>,
     pub explorer_has_custom_root: bool,
     pub code_review: akssora_terminal_ui::CodeReviewModel,
+    pub terminal_code_reviews: HashMap<u64, akssora_terminal_ui::CodeReviewModel>,
+    pub repo_code_reviews: HashMap<std::path::PathBuf, akssora_terminal_ui::CodeReviewModel>,
     pub hovered_code_review_action: Option<akssora_terminal_ui::CodeReviewAction>,
     pub diff_worker: crate::app::review::DiffBackgroundWorker,
     pub(crate) is_selecting_text: bool,
@@ -112,6 +114,9 @@ impl Default for App {
             0.0
         };
         let default_cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let default_repo = akssora_git::GitInspector::repo_root(&default_cwd)
+            .unwrap_or_else(|| default_cwd.clone());
+        let canonical_repo = std::fs::canonicalize(&default_repo).unwrap_or(default_repo);
         let repo_root_opt = akssora_git::GitInspector::repo_root(&default_cwd);
         header.is_git_repo = repo_root_opt.is_some();
         if let Some(ref root) = repo_root_opt {
@@ -121,9 +126,27 @@ impl Default for App {
         let mut explorer = akssora_terminal_ui::ExplorerUi::new(&default_cwd);
         explorer.git_status = akssora_git::GitInspector::status(&default_cwd);
         header.is_explorer_expanded = explorer.is_expanded;
-        let code_review = akssora_terminal_ui::CodeReviewModel::new(&default_cwd);
-        header.git_additions = code_review.diff.total_additions;
-        header.git_deletions = code_review.diff.total_deletions;
+        let code_review = akssora_terminal_ui::CodeReviewModel::new(&canonical_repo);
+        if header.is_git_repo {
+            let staged_adds = code_review.staged_diff.total_additions;
+            let unstaged_adds = code_review.unstaged_diff.total_additions;
+            header.git_additions = if staged_adds == 0 && unstaged_adds == 0 {
+                code_review.diff.total_additions
+            } else {
+                staged_adds + unstaged_adds
+            };
+
+            let staged_dels = code_review.staged_diff.total_deletions;
+            let unstaged_dels = code_review.unstaged_diff.total_deletions;
+            header.git_deletions = if staged_dels == 0 && unstaged_dels == 0 {
+                code_review.diff.total_deletions
+            } else {
+                staged_dels + unstaged_dels
+            };
+        } else {
+            header.git_additions = 0;
+            header.git_deletions = 0;
+        }
         Self {
             window: None,
             state: None,
@@ -170,6 +193,8 @@ impl Default for App {
             pending_chord: None,
             explorer_has_custom_root: false,
             code_review,
+            terminal_code_reviews: HashMap::new(),
+            repo_code_reviews: HashMap::new(),
             hovered_code_review_action: None,
             diff_worker: crate::app::review::DiffBackgroundWorker::new(),
             is_selecting_text: false,

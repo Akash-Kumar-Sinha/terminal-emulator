@@ -45,28 +45,22 @@ impl App {
         }
 
         // 2. Mouse wheel inside active Code Review panel
-        let is_code_review = self
-            .tab_manager
-            .active_tab()
-            .map(|t| matches!(t.kind, TabKind::CodeReview { .. }))
-            .unwrap_or(false);
-        if is_code_review {
-            let show_tabs = self.config.tab_layout.includes_title_bar();
-            let top_h = self.header.total_height(show_tabs);
-            let (win_w, win_h) = self.state.as_ref().map(|s| s.size()).unwrap_or((1000, 700));
-            let ws_x = sb_w + exp_w;
-            let ws_y = top_h;
-            let ws_w = (win_w as f32 - ws_x).max(100.0);
-            let ws_h = (win_h as f32 - ws_y).max(100.0);
-
+        let is_code_review = self.is_code_review_open();
+        if is_code_review
+            && let Some((cr_x, cr_y, cr_w, cr_h)) = self.code_review_bounds()
+            && mx >= cr_x
+            && mx <= cr_x + cr_w
+            && my >= cr_y
+            && my <= cr_y + cr_h
+        {
             let left_sb_w = if self.code_review.sidebar_expanded {
-                self.code_review.sidebar_width.min(ws_w * 0.4).max(220.0)
+                self.code_review.sidebar_width.min(cr_w * 0.4).max(220.0)
             } else {
                 0.0
             };
 
-            if self.code_review.sidebar_expanded && mx >= ws_x && mx <= ws_x + left_sb_w {
-                let sb_h = (ws_h - akssora_terminal_ui::CodeReviewLayout::HEADER_HEIGHT).max(0.0);
+            if self.code_review.sidebar_expanded && mx >= cr_x && mx <= cr_x + left_sb_w {
+                let sb_h = (cr_h - akssora_terminal_ui::CodeReviewLayout::HEADER_HEIGHT).max(0.0);
                 let sidebar_total_h = self.code_review.visible_tree_items().len() as f32
                     * akssora_terminal_ui::CodeReviewLayout::FILE_ROW_HEIGHT
                     + akssora_terminal_ui::CodeReviewLayout::SIDEBAR_TOOLBAR_HEIGHT
@@ -75,8 +69,8 @@ impl App {
                 self.code_review.sidebar_scroll_y = (self.code_review.sidebar_scroll_y
                     - lines * 28.0)
                     .clamp(0.0, max_sidebar_scroll);
-            } else if mx > ws_x + left_sb_w && mx <= ws_x + ws_w {
-                self.scroll_code_review_diff(lines, mx, my, ws_x, ws_y, ws_w, ws_h);
+            } else if mx > cr_x + left_sb_w && mx <= cr_x + cr_w {
+                self.scroll_code_review_diff(lines, mx, my, cr_x, cr_y, cr_w, cr_h);
             }
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();

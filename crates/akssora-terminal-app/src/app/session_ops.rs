@@ -273,8 +273,7 @@ impl App {
         use akssora_terminal_ui::SidebarTarget;
         match target {
             SidebarTarget::Tab(tab_idx) => {
-                self.tab_manager.select(tab_idx);
-                self.sync_active_tab_state();
+                self.select_tab(tab_idx);
                 if let Some(active_id) = self.tab_manager.active_id()
                     && let Some(tree) = self.split_trees.get(&active_id)
                     && !tree.contains_leaf(self.split_manager.active_pane_id.unwrap_or(0))
@@ -303,10 +302,16 @@ impl App {
             }
             SidebarTarget::SplitPane { tab_idx, pane_id }
             | SidebarTarget::Session { tab_idx, pane_id } => {
-                self.tab_manager.select(tab_idx);
-                self.sync_active_tab_state();
-                self.split_manager.focus_pane(pane_id);
-                self.layout_blocks();
+                let tab_changed = self.tab_manager.active_index() != tab_idx;
+                if tab_changed {
+                    self.select_tab(tab_idx);
+                }
+                if self.split_manager.active_pane_id != Some(pane_id) {
+                    self.save_active_terminal_code_review();
+                    self.split_manager.focus_pane(pane_id);
+                    self.load_active_terminal_code_review();
+                    self.layout_blocks();
+                }
                 if let Some(win) = self.window.as_ref() {
                     win.request_redraw();
                 }

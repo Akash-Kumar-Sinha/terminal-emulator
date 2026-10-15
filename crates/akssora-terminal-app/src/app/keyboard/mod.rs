@@ -29,11 +29,14 @@ impl App {
         }
 
         // 2. Code Review panel keyboard routing
-        let is_code_review = self
-            .tab_manager
-            .active_tab()
-            .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::CodeReview { .. }))
-            .unwrap_or(false);
+        let is_code_review = self.is_code_review_open()
+            && (self.code_review.is_full_view
+                || self.header.is_code_review_focused
+                || self
+                    .tab_manager
+                    .active_tab()
+                    .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::CodeReview { .. }))
+                    .unwrap_or(false));
 
         if is_code_review && self.code_review.active_editing_file.is_none() {
             if let Some(idx) = self

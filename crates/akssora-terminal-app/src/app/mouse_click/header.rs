@@ -84,9 +84,12 @@ impl App {
             }
             Some(HeaderItem::BranchItem(idx)) => {
                 if let Some(target_branch) = self.header.git_branches.get(idx).cloned() {
-                    let target_dir = self.current_working_directory();
-                    let repo_root =
-                        akssora_git::GitInspector::repo_root(&target_dir).unwrap_or(target_dir);
+                    let repo_root = if self.is_code_review_open() {
+                        self.code_review.repo_root.clone()
+                    } else {
+                        let target_dir = self.current_working_directory();
+                        akssora_git::GitInspector::repo_root(&target_dir).unwrap_or(target_dir)
+                    };
                     let _ = akssora_git::GitInspector::switch_branch(&repo_root, &target_branch);
                     self.sync_code_review_with_active_terminal();
                 }
@@ -114,8 +117,7 @@ impl App {
                 true
             }
             Some(HeaderItem::Tab(idx)) => {
-                self.tab_manager.select(idx);
-                self.sync_active_tab_state();
+                self.select_tab(idx);
                 if let Some(active_id) = self.tab_manager.active_id()
                     && let Some(tree) = self.split_trees.get(&active_id)
                     && !tree.contains_leaf(self.split_manager.active_pane_id.unwrap_or(0))

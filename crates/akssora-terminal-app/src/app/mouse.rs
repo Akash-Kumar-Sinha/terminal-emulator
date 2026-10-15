@@ -20,11 +20,7 @@ impl App {
         let exp_w = self.explorer.effective_width();
         let ws_x = sb_w + exp_w;
 
-        let is_code_review = self
-            .tab_manager
-            .active_tab()
-            .map(|t| matches!(t.kind, TabKind::CodeReview { .. }))
-            .unwrap_or(false);
+        let is_code_review = self.is_code_review_open();
         let is_editor = self
             .tab_manager
             .active_tab()

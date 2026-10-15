@@ -8,6 +8,7 @@ use akssora_git::{IndexedRepoDiff, load_repo_diff_indexed};
 // INFO: Background worker request message dispatched from the UI thread.
 #[derive(Clone, Debug)]
 pub struct DiffWorkerRequest {
+    pub terminal_id: u64,
     pub generation: u64,
     pub repo_root: PathBuf,
     pub staged: bool,
@@ -15,9 +16,12 @@ pub struct DiffWorkerRequest {
 
 // INFO: Preprocessed immutable diff model response delivered back to the UI thread.
 pub struct DiffWorkerResponse {
+    pub terminal_id: u64,
     pub generation: u64,
     pub repo_root: PathBuf,
     pub staged: bool,
+    pub staged_diff: Arc<IndexedRepoDiff>,
+    pub unstaged_diff: Arc<IndexedRepoDiff>,
     pub diff: Arc<IndexedRepoDiff>,
 }
 
@@ -42,12 +46,21 @@ impl DiffBackgroundWorker {
                     }
 
                     // Step A: Git diff retrieval -> Step C: Parse diff -> Step D: Rayon parallel preprocessing
-                    let indexed = load_repo_diff_indexed(&req.repo_root, req.staged);
+                    let staged_indexed = load_repo_diff_indexed(&req.repo_root, true);
+                    let unstaged_indexed = load_repo_diff_indexed(&req.repo_root, false);
+                    let active = if req.staged {
+                        staged_indexed.clone()
+                    } else {
+                        unstaged_indexed.clone()
+                    };
                     let response = DiffWorkerResponse {
+                        terminal_id: req.terminal_id,
                         generation: req.generation,
                         repo_root: req.repo_root,
                         staged: req.staged,
-                        diff: Arc::new(indexed),
+                        staged_diff: Arc::new(staged_indexed),
+                        unstaged_diff: Arc::new(unstaged_indexed),
+                        diff: Arc::new(active),
                     };
 
                     // Step E: Send indexed immutable diff model to Step F: UI thread

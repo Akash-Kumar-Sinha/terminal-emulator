@@ -57,28 +57,36 @@ pub fn render_header(
     // INFO: Sidebar collapse/expand toggle button.
     let (sx, sy, sw, sh) = CodeReviewLayout::sidebar_toggle_btn_rect(ws_x, ws_y);
     let is_sb_hovered = hovered_action == Some(&CodeReviewAction::ToggleSidebar);
-    let sb_bg = if is_sb_hovered {
-        theme.code_review_header_button_hover
-    } else {
-        theme.code_review_header_button_background
-    };
-    push_rounded_rect(
-        verts,
-        sx,
-        sy,
-        sx + sw,
-        sy + sh,
-        4.0,
-        circle_uv,
-        solid_uv,
-        sb_bg,
-        screen_w,
-        screen_h,
-    );
-    let sb_icon = if model.sidebar_expanded {
+    let is_expanded = model.sidebar_expanded;
+    if is_sb_hovered || is_expanded {
+        let sb_bg = if is_sb_hovered {
+            theme.code_review_header_button_hover
+        } else {
+            theme.header_button_active_background
+        };
+        push_rounded_rect(
+            verts,
+            sx,
+            sy,
+            sx + sw,
+            sy + sh,
+            4.0,
+            circle_uv,
+            solid_uv,
+            sb_bg,
+            screen_w,
+            screen_h,
+        );
+    }
+    let sb_icon = if is_expanded {
         akssora_icons::PanelExpandedIcon::GLYPH
     } else {
         akssora_icons::PanelCollapsedIcon::GLYPH
+    };
+    let sb_icon_col = if is_sb_hovered || is_expanded {
+        theme.text_primary
+    } else {
+        theme.text_secondary
     };
     renderer.render_text(
         queue,
@@ -88,51 +96,13 @@ pub fn render_header(
         sx + (sw - ui_fonts.cell_w) * 0.5,
         sy + (sh - ui_cell_h) * 0.5,
         sw,
-        theme.text_primary,
+        sb_icon_col,
         false,
         screen_w,
         screen_h,
     );
 
-    // INFO: Toggle button to switch between staged and unstaged diff representations.
-    let (ux, uy, uw, uh) = CodeReviewLayout::stage_toggle_btn_rect(ws_x, ws_y);
-    let is_uc_hovered = hovered_action == Some(&CodeReviewAction::ToggleStaged);
-    let uc_bg = if is_uc_hovered {
-        theme.code_review_header_button_hover
-    } else {
-        theme.code_review_header_button_background
-    };
-    push_rounded_rect(
-        verts,
-        ux,
-        uy,
-        ux + uw,
-        uy + uh,
-        4.0,
-        circle_uv,
-        solid_uv,
-        uc_bg,
-        screen_w,
-        screen_h,
-    );
-    let uc_label = if model.is_staged {
-        akssora_icons::ArrowLeftRightIcon::STAGED_LABEL
-    } else {
-        akssora_icons::ArrowLeftRightIcon::UNSTAGED_LABEL
-    };
-    renderer.render_text(
-        queue,
-        ui_fonts,
-        verts,
-        uc_label,
-        ux + 12.0,
-        uy + (uh - ui_cell_h) * 0.5,
-        uw - 24.0,
-        theme.text_primary,
-        false,
-        screen_w,
-        screen_h,
-    );
+    let is_git = akssora_git::GitInspector::is_git_repo(&model.repo_root);
 
     // INFO: Single toggle button to expand or collapse all file diff accordions.
     let (tx, ty, tw, th) = CodeReviewLayout::toggle_collapse_all_btn_rect(ws_x, ws_y);
@@ -182,40 +152,118 @@ pub fn render_header(
     );
 
     // Right: "Commit" button
-    let (cx, cy, cw, ch) = CodeReviewLayout::commit_btn_rect(ws_x, ws_y, ws_w);
-    let is_commit_hovered = hovered_action == Some(&CodeReviewAction::OpenCommitDialog);
-    let commit_bg = if is_commit_hovered {
-        theme.code_review_header_button_hover
+    if is_git {
+        let (cx, cy, cw, ch) = CodeReviewLayout::commit_btn_rect(ws_x, ws_y, ws_w);
+        let is_commit_hovered = hovered_action == Some(&CodeReviewAction::OpenCommitDialog);
+        let commit_bg = if is_commit_hovered {
+            theme.code_review_header_button_hover
+        } else {
+            theme.code_review_header_button_background
+        };
+        push_rounded_rect(
+            verts,
+            cx,
+            cy,
+            cx + cw,
+            cy + ch,
+            4.0,
+            circle_uv,
+            solid_uv,
+            commit_bg,
+            screen_w,
+            screen_h,
+        );
+        let commit_text = "Commit";
+        let tw = commit_text.len() as f32 * ui_fonts.cell_w;
+        let tx = cx + ((cw - tw) * 0.5).max(4.0);
+        renderer.render_text(
+            queue,
+            ui_fonts,
+            verts,
+            commit_text,
+            tx,
+            cy + (ch - ui_cell_h) * 0.5,
+            cw - 8.0,
+            theme.text_primary,
+            false,
+            screen_w,
+            screen_h,
+        );
+    }
+
+    // Right: Expand / Restore toggle button
+    let (ex, ey, ew, eh) = CodeReviewLayout::expand_btn_rect(ws_x, ws_y, ws_w);
+    let is_expand_hovered = hovered_action == Some(&CodeReviewAction::ToggleExpandView);
+    if is_expand_hovered {
+        push_rounded_rect(
+            verts,
+            ex,
+            ey,
+            ex + ew,
+            ey + eh,
+            4.0,
+            circle_uv,
+            solid_uv,
+            theme.code_review_header_button_hover,
+            screen_w,
+            screen_h,
+        );
+    }
+    let expand_cx = (ex + ew * 0.5).round();
+    let expand_cy = (ey + eh * 0.5).round();
+    let expand_icon_col = if is_expand_hovered {
+        theme.text_primary
     } else {
-        theme.code_review_header_button_background
+        theme.text_secondary
     };
-    push_rounded_rect(
-        verts,
-        cx,
-        cy,
-        cx + cw,
-        cy + ch,
-        4.0,
-        circle_uv,
-        solid_uv,
-        commit_bg,
-        screen_w,
-        screen_h,
-    );
-    let commit_text = "Commit";
-    let tw = commit_text.len() as f32 * ui_fonts.cell_w;
-    let tx = cx + ((cw - tw) * 0.5).max(4.0);
-    renderer.render_text(
-        queue,
-        ui_fonts,
-        verts,
-        commit_text,
-        tx,
-        cy + (ch - ui_cell_h) * 0.5,
-        cw - 8.0,
-        theme.text_primary,
-        false,
-        screen_w,
-        screen_h,
-    );
+    {
+        let mut sink = crate::VertexIconSink::new(verts, solid_uv, circle_uv, screen_w, screen_h);
+        if model.is_full_view {
+            akssora_icons::WindowRestoreIcon::draw(
+                &mut sink,
+                expand_cx,
+                expand_cy,
+                1.2,
+                expand_icon_col,
+            );
+        } else {
+            akssora_icons::WindowMaximizeIcon::draw(
+                &mut sink,
+                expand_cx,
+                expand_cy,
+                1.2,
+                expand_icon_col,
+            );
+        }
+    }
+
+    // Right: Close button
+    let (clx, cly, clw, clh) = CodeReviewLayout::close_btn_rect(ws_x, ws_y, ws_w);
+    let is_close_hovered = hovered_action == Some(&CodeReviewAction::ClosePanel);
+    if is_close_hovered {
+        push_rounded_rect(
+            verts,
+            clx,
+            cly,
+            clx + clw,
+            cly + clh,
+            4.0,
+            circle_uv,
+            solid_uv,
+            theme.code_review_header_button_hover,
+            screen_w,
+            screen_h,
+        );
+    }
+    let close_cx = (clx + clw * 0.5).round();
+    let close_cy = (cly + clh * 0.5).round();
+    let close_icon_col = if is_close_hovered {
+        theme.text_primary
+    } else {
+        theme.text_secondary
+    };
+    {
+        let mut sink = crate::VertexIconSink::new(verts, solid_uv, circle_uv, screen_w, screen_h);
+        akssora_icons::WindowCloseIcon::draw(&mut sink, close_cx, close_cy, 1.2, close_icon_col);
+    }
 }

@@ -179,10 +179,23 @@ impl GlyphRenderer {
             .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::Settings))
             .unwrap_or(false);
 
-        let is_code_review = tab_manager
+        let is_editor = tab_manager
             .active_tab()
-            .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::CodeReview { .. }))
+            .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::Editor { .. }))
             .unwrap_or(false);
+
+        let is_code_review = !is_editor
+            && !is_settings
+            && (tab_manager
+                .active_tab()
+                .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::CodeReview { .. }))
+                .unwrap_or(false)
+                || (tab_manager
+                    .active_tab()
+                    .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::Terminal { .. }))
+                    .unwrap_or(false)
+                    && (code_review.map(|cr| cr.is_open).unwrap_or(false)
+                        || header.is_code_review_active)));
 
         if is_settings {
             render_settings_panel(
@@ -210,27 +223,91 @@ impl GlyphRenderer {
                 screen_h,
             );
         } else if is_code_review && let Some(cr) = code_review {
-            crate::render_code_review_panel(
-                self,
-                queue,
-                fonts,
-                ui_fonts,
-                theme,
-                cr,
-                editor_documents,
-                active_editor,
-                hovered_code_review_action,
-                hovered_editor_gutter,
-                ws_x,
-                ws_y,
-                ws_w,
-                ws_h,
-                &mut verts,
-                solid_uv,
-                circle_uv,
-                screen_w,
-                screen_h,
-            );
+            if cr.is_full_view || blocks.is_empty() {
+                crate::render_code_review_panel(
+                    self,
+                    queue,
+                    fonts,
+                    ui_fonts,
+                    theme,
+                    cr,
+                    editor_documents,
+                    active_editor,
+                    hovered_code_review_action,
+                    hovered_editor_gutter,
+                    ws_x,
+                    ws_y,
+                    ws_w,
+                    ws_h,
+                    &mut verts,
+                    solid_uv,
+                    circle_uv,
+                    screen_w,
+                    screen_h,
+                );
+            } else {
+                let total_w = (ws_w - akssora_terminal_ui::PaneTree::DIVIDER_THICKNESS).max(0.0);
+                let min_w = 120.0_f32.min(total_w * 0.45);
+                let ratio = cr.split_ratio.clamp(0.15, 0.85);
+                let term_w = (total_w * (1.0 - ratio)).max(min_w).min(total_w - min_w);
+                let div_x = ws_x + term_w;
+                let cr_x = div_x + akssora_terminal_ui::PaneTree::DIVIDER_THICKNESS;
+                let cr_w =
+                    (ws_w - term_w - akssora_terminal_ui::PaneTree::DIVIDER_THICKNESS).max(0.0);
+
+                // 1. Terminal buffer blocks on the left
+                render_terminal_blocks(
+                    self,
+                    queue,
+                    fonts,
+                    theme,
+                    blocks,
+                    active_pane_id,
+                    &mut verts,
+                    solid_uv,
+                    circle_uv,
+                    screen_w,
+                    screen_h,
+                );
+
+                // 2. Vertical split divider (clean, subtle 1px divider; no colored border effect)
+                let divider_color = theme.border_subtle;
+                crate::quad::push_quad(
+                    &mut verts,
+                    div_x,
+                    ws_y,
+                    div_x + 1.0,
+                    ws_y + ws_h,
+                    solid_uv,
+                    solid_uv,
+                    divider_color,
+                    screen_w,
+                    screen_h,
+                );
+
+                // 3. Code Review panel on the right
+                crate::render_code_review_panel(
+                    self,
+                    queue,
+                    fonts,
+                    ui_fonts,
+                    theme,
+                    cr,
+                    editor_documents,
+                    active_editor,
+                    hovered_code_review_action,
+                    hovered_editor_gutter,
+                    cr_x,
+                    ws_y,
+                    cr_w,
+                    ws_h,
+                    &mut verts,
+                    solid_uv,
+                    circle_uv,
+                    screen_w,
+                    screen_h,
+                );
+            }
         } else if let Some(doc) = active_editor {
             crate::render_editor_view(
                 self,

@@ -2131,7 +2131,8 @@ fn test_code_review_accordion_natural_scrolling_and_caching() {
 
     // 3. Tree items caching
     let items1 = model.visible_tree_items();
-    assert_eq!(items1.len(), 2);
+    // 2 section headers (Staged Changes, Changes) + 2 file items in Changes
+    assert_eq!(items1.len(), 4);
     let items2 = model.visible_tree_items();
     assert_eq!(items1, items2);
 
@@ -2478,6 +2479,7 @@ fn test_git_diff_retrieval_background_worker_architecture_pipeline() {
     // Step B: Background worker lifecycle verification
     let worker = DiffBackgroundWorker::new();
     worker.send_request(DiffWorkerRequest {
+        terminal_id: 1,
         generation: 2,
         repo_root: PathBuf::from("."),
         staged: false,
@@ -3470,4 +3472,1365 @@ fn test_code_review_hover_line_number_reveals_buttons_and_leaves_clean() {
     );
 
     let _ = std::fs::remove_dir_all(&repo_dir);
+}
+
+#[test]
+fn test_code_review_sidebar_tree_styling_and_selection_isolation() {
+    use akssora_git::{FileDiff, FileGitStatus, RepoDiff};
+    use akssora_terminal_ui::{
+        CodeReviewAction, CodeReviewLayout, CodeReviewModel, CodeReviewTreeItem,
+    };
+    use std::path::PathBuf;
+
+    let diff_files = vec![
+        FileDiff {
+            path: PathBuf::from("src/first.rs"),
+            old_path: None,
+            status: FileGitStatus::Modified,
+            hunks: vec![],
+            additions: 12,
+            deletions: 3,
+            is_binary: false,
+            line_count: 50,
+        },
+        FileDiff {
+            path: PathBuf::from("src/second.rs"),
+            old_path: None,
+            status: FileGitStatus::Added,
+            hunks: vec![],
+            additions: 25,
+            deletions: 0,
+            is_binary: false,
+            line_count: 25,
+        },
+        FileDiff {
+            path: PathBuf::from("src/third.rs"),
+            old_path: None,
+            status: FileGitStatus::Deleted,
+            hunks: vec![],
+            additions: 0,
+            deletions: 15,
+            is_binary: false,
+            line_count: 0,
+        },
+    ];
+
+    let unstaged_diff = RepoDiff {
+        files: diff_files.clone(),
+        total_additions: 37,
+        total_deletions: 18,
+        files_changed: 3,
+    };
+
+    let mut model = CodeReviewModel::default();
+    model.diff = unstaged_diff.clone();
+    model.unstaged_diff = unstaged_diff;
+    model.is_staged = false;
+
+    // 1. Initial selection: file 0 is selected
+    model.select_file(0);
+    assert_eq!(model.selected_file_idx, 0);
+    assert_eq!(model.active_file_idx, Some(0));
+
+    let items = model.visible_tree_items();
+    let file_items: Vec<_> = items
+        .iter()
+        .filter_map(|it| match it {
+            CodeReviewTreeItem::File {
+                is_staged,
+                orig_idx,
+                path,
+                display_name,
+                status,
+                additions,
+                deletions,
+                ..
+            } => Some((
+                *is_staged,
+                *orig_idx,
+                path.clone(),
+                display_name.clone(),
+                *status,
+                *additions,
+                *deletions,
+            )),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(file_items.len(), 3);
+    assert_eq!(file_items[0].1, 0); // first.rs
+    assert_eq!(file_items[1].1, 1); // second.rs
+    assert_eq!(file_items[2].1, 2); // third.rs
+
+    // Verify git status colors and statistics are preserved
+    assert_eq!(file_items[0].4, FileGitStatus::Modified);
+    assert_eq!(file_items[0].5, 12);
+    assert_eq!(file_items[0].6, 3);
+    assert_eq!(file_items[1].4, FileGitStatus::Added);
+    assert_eq!(file_items[2].4, FileGitStatus::Deleted);
+
+    // 2. Select file 1 (src/second.rs): file 0 is deselected, file 1 is selected
+    model.select_file(1);
+    assert_eq!(model.selected_file_idx, 1);
+    assert_eq!(model.active_file_idx, Some(1));
+    assert_ne!(model.active_file_idx, Some(0));
+
+    // 3. Select file 2 (src/third.rs): file 1 is deselected, file 2 is selected
+    model.select_file(2);
+    assert_eq!(model.selected_file_idx, 2);
+    assert_eq!(model.active_file_idx, Some(2));
+    assert_ne!(model.active_file_idx, Some(1));
+
+    // 4. Verify sidebar hit test on file actions works without shifting layout
+    let (sbx, sby, sbw, _sbh) =
+        CodeReviewLayout::sidebar_rect(&model, 0.0, 0.0, 800.0, 600.0).unwrap();
+    let row_top = sby + CodeReviewLayout::SIDEBAR_TOOLBAR_HEIGHT + 4.0;
+    // Row 0: Staged Changes header, Row 1: Changes header, Row 2: Directory "src", Row 3: first.rs
+    let row_file_y = row_top + 3.0 * CodeReviewLayout::FILE_ROW_HEIGHT;
+    let (open_rect, mid_rect, stage_opt) =
+        CodeReviewLayout::sidebar_file_action_rects(sbx, sbw, row_file_y, false);
+
+    assert!(
+        stage_opt.is_some(),
+        "Unstaged file must have stage action rect"
+    );
+    assert!(open_rect.0 < mid_rect.0);
+    assert!(mid_rect.0 < stage_opt.unwrap().0);
+
+    let stage_act = CodeReviewLayout::hit_test(
+        &model,
+        0.0,
+        0.0,
+        800.0,
+        600.0,
+        stage_opt.unwrap().0 + 5.0,
+        stage_opt.unwrap().1 + 5.0,
+    );
+    assert!(matches!(
+        stage_act,
+        Some(CodeReviewAction::StageFileByPath(_))
+    ));
+}
+
+#[test]
+fn test_code_review_split_view_and_expand_collapse_toggle() {
+    use akssora_terminal_ui::{CodeReviewAction, CodeReviewLayout};
+
+    let mut app = akssora_terminal_app::App::new();
+    let _tab1 = app.open_terminal_tab();
+    let initial_tab_count = app.tab_manager.len();
+    assert_eq!(initial_tab_count, 1, "App should have 1 terminal tab");
+
+    // 1. Initial State: Code Review is closed
+    assert!(!app.is_code_review_open());
+    assert_eq!(app.code_review_bounds(), None);
+    assert_eq!(app.code_review_split_divider_rect(), None);
+
+    // 2. Open Code Review: Opens in split view by default alongside the terminal
+    app.open_code_review();
+    assert!(
+        app.is_code_review_open(),
+        "Code Review must be marked as open"
+    );
+    assert!(
+        !app.code_review.is_full_view,
+        "Code Review must open in split view by default"
+    );
+    assert_eq!(
+        app.code_review.split_ratio, 0.5,
+        "Default split ratio should be 0.5"
+    );
+
+    // Ensure terminal session/tab is preserved (not replaced or closed)
+    assert_eq!(
+        app.tab_manager.len(),
+        initial_tab_count,
+        "Terminal tab count must be preserved"
+    );
+
+    // Bounds check in split view: terminal pane and code review appear side-by-side
+    let bounds = app.code_review_bounds();
+    assert!(bounds.is_some(), "Code Review bounds must be present");
+    let (cr_x, cr_y, cr_w, cr_h) = bounds.unwrap();
+    assert!(cr_w > 0.0 && cr_h > 0.0);
+    assert!(
+        cr_x > 0.0,
+        "Code review in split view should be positioned to the right of terminal"
+    );
+
+    // Split divider rect check: divider must be present between terminal and code review
+    let div_rect = app.code_review_split_divider_rect();
+    assert!(div_rect.is_some(), "Split divider must exist in split view");
+    let (div_x, div_y, div_w, div_h) = div_rect.unwrap();
+    assert!(
+        (div_x + div_w - cr_x).abs() < 1.0,
+        "Divider must sit immediately to the left of Code Review"
+    );
+    assert_eq!(div_y, cr_y);
+    assert_eq!(div_h, cr_h);
+
+    // 3. Header Expand Button hit test & Tooltip in split view
+    let (win_w, win_h) = (
+        app.config.window.width as f32,
+        app.config.window.height as f32,
+    );
+    let show_tabs = app.config.tab_layout.includes_title_bar();
+    let top_h = app.header.total_height(show_tabs);
+    let show_sidebar = app.config.tab_layout.show_sidebar();
+    let sb_w = app.sidebar.effective_width(show_sidebar);
+    let exp_w = app.explorer.effective_width();
+    let ws_x = sb_w + exp_w;
+
+    let expand_btn = CodeReviewLayout::expand_btn_rect(cr_x, cr_y, cr_w);
+    let hit_action = CodeReviewLayout::hit_test(
+        &app.code_review,
+        cr_x,
+        cr_y,
+        cr_w,
+        cr_h,
+        expand_btn.0 + 5.0,
+        expand_btn.1 + 5.0,
+    );
+    assert_eq!(
+        hit_action,
+        Some(CodeReviewAction::ToggleExpandView),
+        "Hit test on expand button must return ToggleExpandView"
+    );
+
+    // Check tooltip in split view: "Expand Code Review"
+    let tooltip = akssora_terminal_app::app::tooltips::code_review::check_code_review_tooltip(
+        &app,
+        expand_btn.0 + 5.0,
+        expand_btn.1 + 5.0,
+        sb_w,
+        exp_w,
+        win_w,
+        win_h,
+    );
+    assert!(
+        tooltip.is_some(),
+        "Tooltip must be present when hovering expand button"
+    );
+    assert_eq!(tooltip.unwrap().text, "Expand Code Review");
+
+    // 4. Click Expand Button -> Expand into Full View
+    let handled = app.handle_code_review_click(
+        expand_btn.0 + 5.0,
+        expand_btn.1 + 5.0,
+        win_w,
+        win_h,
+        top_h,
+        ws_x,
+    );
+    assert!(handled, "Click on expand button must be handled");
+    assert!(
+        app.code_review.is_full_view,
+        "Code Review must now be in full view"
+    );
+
+    // In full view: divider is hidden, Code Review takes full workspace
+    assert_eq!(
+        app.code_review_split_divider_rect(),
+        None,
+        "Split divider must be hidden in full view"
+    );
+    let full_bounds = app.code_review_bounds().unwrap();
+    assert!(
+        full_bounds.2 > cr_w,
+        "Full view width must be larger than split view width"
+    );
+
+    // Check tooltip in full view: "Restore Split View"
+    let full_expand_btn =
+        CodeReviewLayout::expand_btn_rect(full_bounds.0, full_bounds.1, full_bounds.2);
+    let restore_tooltip =
+        akssora_terminal_app::app::tooltips::code_review::check_code_review_tooltip(
+            &app,
+            full_expand_btn.0 + 5.0,
+            full_expand_btn.1 + 5.0,
+            sb_w,
+            exp_w,
+            win_w,
+            win_h,
+        );
+    assert!(
+        restore_tooltip.is_some(),
+        "Restore tooltip must be present in full view"
+    );
+    assert_eq!(restore_tooltip.unwrap().text, "Restore Split View");
+
+    // 5. Click Restore Button -> Collapse back into Split View
+    let handled_restore = app.handle_code_review_click(
+        full_expand_btn.0 + 5.0,
+        full_expand_btn.1 + 5.0,
+        win_w,
+        win_h,
+        top_h,
+        ws_x,
+    );
+    assert!(handled_restore, "Click on restore button must be handled");
+    assert!(
+        !app.code_review.is_full_view,
+        "Code Review must return to split view"
+    );
+    assert_eq!(
+        app.code_review.split_ratio, 0.5,
+        "Split ratio must be restored"
+    );
+    assert!(
+        app.code_review_split_divider_rect().is_some(),
+        "Split divider must reappear"
+    );
+
+    // 6. Test Split Divider Resizing
+    app.code_review.set_split_ratio(0.7);
+    assert_eq!(app.code_review.split_ratio, 0.7);
+    let resized_bounds = app.code_review_bounds().unwrap();
+    assert!(
+        resized_bounds.2 > cr_w,
+        "Increasing split ratio must allocate more width to Code Review"
+    );
+
+    // 7. Hit test and click Close Button -> Code Review closes and restores full terminal
+    let (curr_x, curr_y, curr_w, curr_h) = resized_bounds;
+    let close_btn = CodeReviewLayout::close_btn_rect(curr_x, curr_y, curr_w);
+    let hit_close = CodeReviewLayout::hit_test(
+        &app.code_review,
+        curr_x,
+        curr_y,
+        curr_w,
+        curr_h,
+        close_btn.0 + 5.0,
+        close_btn.1 + 5.0,
+    );
+    assert_eq!(hit_close, Some(CodeReviewAction::ClosePanel));
+
+    let handled_close = app.handle_code_review_click(
+        close_btn.0 + 5.0,
+        close_btn.1 + 5.0,
+        win_w,
+        win_h,
+        top_h,
+        ws_x,
+    );
+    assert!(handled_close, "Click on close button must be handled");
+    assert!(!app.is_code_review_open(), "Code Review must be closed");
+    assert_eq!(app.code_review_bounds(), None);
+    assert_eq!(app.code_review_split_divider_rect(), None);
+}
+
+#[test]
+fn test_code_review_per_repository_independence_and_context_switching() {
+    use akssora_terminal_app::App;
+
+    let base_dir = std::env::temp_dir().join(format!("akssora_repo_test_{}", std::process::id()));
+    let repo_a = base_dir.join("repo_a");
+    let repo_b = base_dir.join("repo_b");
+    let nested_a = repo_a.join("src").join("deep").join("nested");
+
+    let _ = std::fs::remove_dir_all(&base_dir);
+    std::fs::create_dir_all(repo_a.join(".git")).unwrap();
+    std::fs::create_dir_all(&nested_a).unwrap();
+    std::fs::create_dir_all(repo_b.join(".git")).unwrap();
+
+    let canonical_a = App::canonical_repo_root(&repo_a);
+    let canonical_b = App::canonical_repo_root(&repo_b);
+    let canonical_nested_a = App::canonical_repo_root(&nested_a);
+
+    // 1. Nested directories within the same Git repository resolve to the same canonical repository context
+    assert_eq!(
+        canonical_nested_a, canonical_a,
+        "Nested directory must resolve to the repository root"
+    );
+    assert_ne!(
+        canonical_a, canonical_b,
+        "Separate repositories must have distinct roots"
+    );
+
+    let mut app = App::new();
+
+    // 2. Open Code Review for Repo A
+    app.open_code_review_for(&nested_a);
+    assert!(app.is_code_review_open());
+    assert_eq!(app.current_code_review_repo(), canonical_a);
+    assert_eq!(app.code_review.repo_root, canonical_a);
+
+    // Modify Repo A's UI state (selection, scroll, collapsed state)
+    app.code_review.selected_file_idx = 4;
+    app.code_review.diff_scroll_y = 175.0;
+    app.code_review.toggle_section_collapse(true);
+
+    // 3. Switch Code Review to Repo B without closing the panel
+    app.set_code_review_repo(&repo_b);
+    assert!(
+        app.is_code_review_open(),
+        "Panel must remain open across repo switch"
+    );
+    assert_eq!(app.current_code_review_repo(), canonical_b);
+    assert_eq!(app.code_review.repo_root, canonical_b);
+
+    // Repo B must have its own independent initial state
+    assert_eq!(app.code_review.selected_file_idx, 0);
+    assert_eq!(app.code_review.diff_scroll_y, 0.0);
+
+    // Modify Repo B's UI state
+    app.code_review.selected_file_idx = 2;
+    app.code_review.diff_scroll_y = 320.0;
+
+    // 4. Switch back to Repo A: Repo A's state must be completely preserved
+    app.set_code_review_repo(&nested_a);
+    assert_eq!(app.current_code_review_repo(), canonical_a);
+    assert_eq!(app.code_review.repo_root, canonical_a);
+    assert_eq!(
+        app.code_review.selected_file_idx, 4,
+        "Repo A selected file index must be restored"
+    );
+    assert_eq!(
+        app.code_review.diff_scroll_y, 175.0,
+        "Repo A scroll position must be restored"
+    );
+    assert!(
+        app.code_review.staged_collapsed,
+        "Repo A staged section collapse state must be restored"
+    );
+
+    // 5. Switch back to Repo B: Repo B's state must also be completely preserved
+    app.set_code_review_repo(&repo_b);
+    assert_eq!(app.current_code_review_repo(), canonical_b);
+    assert_eq!(
+        app.code_review.selected_file_idx, 2,
+        "Repo B selected file index must be restored"
+    );
+    assert_eq!(
+        app.code_review.diff_scroll_y, 320.0,
+        "Repo B scroll position must be restored"
+    );
+
+    let _ = std::fs::remove_dir_all(&base_dir);
+}
+
+#[test]
+fn test_code_review_terminal_independence_and_cwd_isolation() {
+    use akssora_terminal_app::App;
+
+    let base_dir = std::env::temp_dir().join(format!("akssora_term_indep_{}", std::process::id()));
+    let repo_a = base_dir.join("repo_a");
+    let repo_b = base_dir.join("repo_b");
+    let non_git = base_dir.join("non_git_folder");
+
+    let _ = std::fs::remove_dir_all(&base_dir);
+    std::fs::create_dir_all(repo_a.join(".git")).unwrap();
+    std::fs::create_dir_all(repo_b.join(".git")).unwrap();
+    std::fs::create_dir_all(&non_git).unwrap();
+
+    let canonical_a = App::canonical_repo_root(&repo_a);
+    let canonical_b = App::canonical_repo_root(&repo_b);
+
+    let mut app = App::new();
+
+    // 1. Terminal A created in repo_a
+    let term_a_id = app.open_terminal_tab_in(Some(&repo_a));
+    assert_eq!(app.tab_count(), 1);
+
+    // Terminal A opens Code Review in repo_a
+    app.open_code_review();
+    assert!(app.is_code_review_open());
+    assert!(!app.code_review.is_full_view);
+    assert_eq!(app.current_code_review_repo(), canonical_a);
+
+    // Modify Terminal A's Code Review state
+    app.code_review.selected_file_idx = 3;
+    app.code_review.diff_scroll_y = 150.0;
+
+    // 2. Creating Terminal B in a non-git directory:
+    // Must NOT inherit Terminal A's Code Review panel, diff, or header statistics
+    let term_b_id = app.open_terminal_tab_in(Some(&non_git));
+    assert_eq!(app.tab_count(), 2);
+    assert_ne!(term_a_id, term_b_id, "Terminals must be separate sessions");
+
+    assert!(
+        !app.is_code_review_open(),
+        "Terminal B must start with Code Review closed"
+    );
+    assert_eq!(
+        app.header.git_additions, 0,
+        "Terminal B must not inherit git additions"
+    );
+    assert_eq!(
+        app.header.git_deletions, 0,
+        "Terminal B must not inherit git deletions"
+    );
+    assert!(
+        !app.header.is_git_repo,
+        "Non-git folder must not be detected as git repo"
+    );
+
+    // 3. Terminal B opens Code Review in the non-git directory
+    app.open_code_review();
+    assert!(app.is_code_review_open());
+    assert!(
+        app.code_review.diff.files.is_empty(),
+        "Non-git directory must produce no diff files"
+    );
+    assert!(
+        app.code_review.visible_tree_items().is_empty(),
+        "Non-git directory must display no staging or section controls"
+    );
+    assert_eq!(app.header.git_additions, 0);
+    assert_eq!(app.header.git_deletions, 0);
+    assert!(!app.header.is_git_repo);
+
+    // 4. Terminal B navigates to repo_b and opens Code Review
+    app.open_code_review_for(&repo_b);
+    assert_eq!(app.current_code_review_repo(), canonical_b);
+    assert_eq!(app.code_review.repo_root, canonical_b);
+    assert!(app.header.is_git_repo);
+
+    // 5. Switch back to Terminal A:
+    // Terminal A retains its original panel, split state, repo context, and UI state
+    app.select_tab(0);
+    assert!(
+        app.is_code_review_open(),
+        "Terminal A's Code Review panel must remain open"
+    );
+    assert_eq!(
+        app.current_code_review_repo(),
+        canonical_a,
+        "Terminal A's repo must be repo_a"
+    );
+    assert_eq!(
+        app.code_review.selected_file_idx, 3,
+        "Terminal A's selected file must be preserved"
+    );
+    assert_eq!(
+        app.code_review.diff_scroll_y, 150.0,
+        "Terminal A's scroll position must be preserved"
+    );
+
+    // 6. Switch back to Terminal B:
+    app.select_tab(1);
+    assert!(
+        app.is_code_review_open(),
+        "Terminal B's Code Review panel must remain open"
+    );
+    assert_eq!(
+        app.current_code_review_repo(),
+        canonical_b,
+        "Terminal B's repo must be repo_b"
+    );
+
+    // 7. Closing Code Review on Terminal B does not affect Terminal A
+    app.close_code_review();
+    assert!(!app.is_code_review_open());
+
+    app.select_tab(0);
+    assert!(
+        app.is_code_review_open(),
+        "Terminal A's Code Review must remain open after Terminal B closed its panel"
+    );
+
+    let _ = std::fs::remove_dir_all(&base_dir);
+}
+
+#[test]
+fn test_closing_one_code_review_panel_does_not_close_the_other() {
+    use akssora_terminal_app::App;
+    use akssora_terminal_ui::SplitDirection;
+
+    let base_dir =
+        std::env::temp_dir().join(format!("akssora_close_both_bug_{}", std::process::id()));
+    let repo_a = base_dir.join("repo_a");
+    let repo_b = base_dir.join("repo_b");
+
+    let _ = std::fs::remove_dir_all(&base_dir);
+    std::fs::create_dir_all(repo_a.join(".git")).unwrap();
+    std::fs::create_dir_all(repo_b.join(".git")).unwrap();
+
+    let canonical_a = App::canonical_repo_root(&repo_a);
+    let canonical_b = App::canonical_repo_root(&repo_b);
+
+    let mut app = App::new();
+
+    // --- Case 1: Two Terminal Tabs ---
+    // 1. Open Terminal A in repo_a and open Code Review
+    let _term_a = app.open_terminal_tab_in(Some(&repo_a));
+    app.open_code_review();
+    assert!(app.is_code_review_open());
+    assert_eq!(app.current_code_review_repo(), canonical_a);
+
+    // 2. Open Terminal B in repo_b and open Code Review
+    let _term_b = app.open_terminal_tab_in(Some(&repo_b));
+    app.open_code_review();
+    assert!(app.is_code_review_open());
+    assert_eq!(app.current_code_review_repo(), canonical_b);
+
+    // 3. Close Code Review on Terminal B
+    app.close_code_review();
+    assert!(
+        !app.is_code_review_open(),
+        "Terminal B Code Review must be closed"
+    );
+
+    // 4. Switch to Terminal A via prev_tab: Terminal A must STILL be open!
+    app.prev_tab();
+    assert!(
+        app.is_code_review_open(),
+        "Closing Terminal B's Code Review must NOT close Terminal A's Code Review"
+    );
+    assert_eq!(app.current_code_review_repo(), canonical_a);
+
+    // 5. Switch back to Terminal B via next_tab: Terminal B must STILL be closed!
+    app.next_tab();
+    assert!(
+        !app.is_code_review_open(),
+        "Terminal B Code Review must remain closed"
+    );
+
+    // --- Case 2: Split Panes within a Tab ---
+    // In Terminal B, split the pane into repo_a
+    let _split_id = app
+        .split_active_pane_in(SplitDirection::Vertical, Some(&repo_a))
+        .unwrap();
+    // Split pane starts with code review closed
+    assert!(!app.is_code_review_open());
+
+    // Open Code Review in split pane (which is in repo_a)
+    app.open_code_review();
+    assert!(app.is_code_review_open());
+    assert_eq!(app.current_code_review_repo(), canonical_a);
+
+    // Switch focus back to original pane of tab B
+    app.focus_next_split();
+    assert!(
+        !app.is_code_review_open(),
+        "Original pane in tab B must still have Code Review closed"
+    );
+
+    // Open Code Review in original pane of tab B
+    app.open_code_review();
+    assert!(app.is_code_review_open());
+    assert_eq!(app.current_code_review_repo(), canonical_b);
+
+    // Now both split panes have Code Review open.
+    // Close Code Review in original pane of tab B:
+    app.close_code_review();
+    assert!(!app.is_code_review_open());
+
+    // Switch focus back to split_id:
+    app.focus_next_split();
+    assert!(
+        app.is_code_review_open(),
+        "Split pane must retain its open Code Review panel after other pane closed its panel"
+    );
+    assert_eq!(app.current_code_review_repo(), canonical_a);
+
+    let _ = std::fs::remove_dir_all(&base_dir);
+}
+
+#[test]
+fn test_code_review_split_view_seamless_inline_editing() {
+    use akssora_git::{DiffHunk, DiffLine, DiffLineType, FileDiff, FileGitStatus, RepoDiff};
+    use akssora_terminal_ui::{CodeReviewAction, CodeReviewLayout, CodeReviewModel};
+    use std::path::PathBuf;
+
+    let base_dir = std::env::temp_dir().join(format!(
+        "akssora_test_inline_edit_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(base_dir.join(".git")).unwrap();
+    let file_path = PathBuf::from("service.rs");
+    let full_path = base_dir.join(&file_path);
+    std::fs::write(
+        &full_path,
+        "pub fn compute() -> i32 {\n    let factor = 2;\n    factor * 21\n}\n",
+    )
+    .unwrap();
+
+    let mut model = CodeReviewModel::new(&base_dir);
+    model.diff = RepoDiff {
+        files: vec![FileDiff {
+            path: file_path.clone(),
+            old_path: None,
+            status: FileGitStatus::Modified,
+            additions: 1,
+            deletions: 0,
+            line_count: 4,
+            is_binary: false,
+            hunks: vec![DiffHunk {
+                header: "@@ -1,4 +1,4 @@".to_string(),
+                old_start: 1,
+                old_lines: 4,
+                new_start: 1,
+                new_lines: 4,
+                lines: vec![
+                    DiffLine {
+                        line_type: DiffLineType::Context,
+                        content: "pub fn compute() -> i32 {\n".to_string(),
+                        old_line_num: Some(1),
+                        new_line_num: Some(1),
+                    },
+                    DiffLine {
+                        line_type: DiffLineType::Add,
+                        content: "    let factor = 2;\n".to_string(),
+                        old_line_num: None,
+                        new_line_num: Some(2),
+                    },
+                    DiffLine {
+                        line_type: DiffLineType::Context,
+                        content: "    factor * 21\n".to_string(),
+                        old_line_num: Some(3),
+                        new_line_num: Some(3),
+                    },
+                    DiffLine {
+                        line_type: DiffLineType::Context,
+                        content: "}\n".to_string(),
+                        old_line_num: Some(4),
+                        new_line_num: Some(4),
+                    },
+                ],
+            }],
+        }],
+        files_changed: 1,
+        total_additions: 1,
+        total_deletions: 0,
+    };
+
+    let diff = model.diff.clone();
+
+    let mut app = akssora_terminal_app::App::new();
+    let _tab = app.open_terminal_tab();
+    app.open_code_review_for(&base_dir);
+    app.code_review.diff = diff;
+    app.prepare_code_review_editor_file(0);
+
+    // 1. Verify Code Review is open in split view in a terminal tab
+    assert!(app.is_code_review_open(), "Code Review must be open");
+    assert!(!app.code_review.is_full_view, "Must be in split view");
+
+    // 2. active_editor and active_editor_mut return the document in split view!
+    let doc = app
+        .active_editor()
+        .expect("Must have active editor in split view");
+    assert_eq!(doc.path, Some(full_path.clone()));
+
+    // 3. Click on line 2 (the added line) in Code Review card body to position cursor
+    let (cr_x, cr_y, cr_w, cr_h) = app
+        .code_review_bounds()
+        .expect("Must have bounds in split view");
+    let (vx, vy, _vw, _vh) =
+        CodeReviewLayout::diff_viewport_rect(&app.code_review, cr_x, cr_y, cr_w, cr_h);
+    let card_x = vx + 16.0;
+    let card_top = vy + 12.0;
+    let line2_y = card_top
+        + CodeReviewLayout::CARD_HEADER_HEIGHT
+        + 8.0
+        + CodeReviewLayout::UNMODIFIED_LINES_HEIGHT
+        + CodeReviewLayout::DIFF_LINE_HEIGHT
+        + 4.0;
+    let click_x = card_x + 80.0;
+
+    let hit =
+        CodeReviewLayout::hit_test(&app.code_review, cr_x, cr_y, cr_w, cr_h, click_x, line2_y);
+    assert!(
+        matches!(hit, Some(CodeReviewAction::ClickEditor { orig_idx: 0, .. })),
+        "Hit test must target ClickEditor for file 0"
+    );
+
+    let show_sidebar = app.config.tab_layout.show_sidebar();
+    let show_tabs = app.config.tab_layout.includes_title_bar();
+    let top_h = app.header.total_height(show_tabs);
+    let sb_w = app.sidebar.effective_width(show_sidebar);
+    let exp_w = app.explorer.effective_width();
+    let ws_x = sb_w + exp_w;
+    let w = app.config.window.width as f32;
+    let h = app.config.window.height as f32;
+
+    let clicked = app.handle_code_review_click(click_x, line2_y, w, h, top_h, ws_x);
+    assert!(clicked, "Click inside Code Review must be handled");
+
+    // Cursor row must now be 1 (line 2 of the document)
+    let doc_after_click = app.active_editor().unwrap();
+    assert_eq!(
+        doc_after_click.cursor.0, 1,
+        "Cursor row should be line 2 (index 1)"
+    );
+
+    // 4. Directly edit in-place without clicking any special edit buttons
+    {
+        let doc_mut = app
+            .active_editor_mut()
+            .expect("Must get mutable active editor");
+        doc_mut.insert_char_smart('_');
+        doc_mut.insert_char_smart('m');
+        doc_mut.insert_char_smart('o');
+        doc_mut.insert_char_smart('d');
+    }
+
+    let modified_line = app
+        .active_editor()
+        .unwrap()
+        .buffer
+        .get_line(1)
+        .unwrap()
+        .to_string();
+    assert!(
+        modified_line.contains("_mod"),
+        "Buffer must contain typed text: {modified_line}"
+    );
+
+    // 5. Test saving: Ctrl+S saves document to disk
+    {
+        let doc_mut = app.active_editor_mut().unwrap();
+        let _ = doc_mut.save();
+    }
+    let saved_content = std::fs::read_to_string(&full_path).unwrap();
+    assert!(
+        saved_content.contains("_mod"),
+        "Disk file must be saved with new edits"
+    );
+
+    let _ = std::fs::remove_dir_all(&base_dir);
+}
+
+#[test]
+fn test_header_right_buttons_no_overlap_and_per_terminal_git_stats() {
+    use akssora_terminal_app::App;
+    use akssora_terminal_ui::{CodeReviewLayout, Header, HeaderButton, HeaderItem};
+
+    // 1. Verify Header Right-side Buttons Geometry (No Overlaps)
+    let mut header = Header::new("Akssora");
+    header.is_git_repo = true;
+    header.git_additions = 110;
+    header.git_deletions = 7;
+
+    for win_w in [600.0, 800.0, 1000.0, 1440.0] {
+        let (cr_x, _cr_y, cr_w, _cr_h) = header.code_review_button_rect(win_w);
+        let (sx, _sy, sw, _sh) = header.settings_button_rect(win_w);
+        let (min_x, _min_y, _min_w, _min_h) = header.button_rect(HeaderButton::Minimize, win_w);
+
+        // Code review right edge must be strictly to the left of settings button
+        assert!(
+            cr_x + cr_w <= sx,
+            "Code Review button [{}..{}] must not overlap settings button [{}] at width {}",
+            cr_x,
+            cr_x + cr_w,
+            sx,
+            win_w
+        );
+        assert!(
+            sx - (cr_x + cr_w) >= 6.0,
+            "Must maintain at least 6px spacing between Code Review button and Settings button"
+        );
+
+        // Settings button right edge must be strictly to the left of minimize button
+        assert!(
+            sx + sw <= min_x,
+            "Settings button [{}..{}] must not overlap window minimize button [{}] at width {}",
+            sx,
+            sx + sw,
+            min_x,
+            win_w
+        );
+
+        // Hit testing must cleanly distinguish each item
+        assert_eq!(
+            header.hit_test_item_ex(cr_x + 5.0, 15.0, win_w, 1, false, true, true),
+            Some(HeaderItem::CodeReview),
+            "Hit testing Code Review button must return CodeReview item"
+        );
+        assert_eq!(
+            header.hit_test_item_ex(sx + 5.0, 15.0, win_w, 1, false, true, true),
+            Some(HeaderItem::Settings),
+            "Hit testing Settings button must return Settings item"
+        );
+        assert_eq!(
+            header.hit_test_item_ex(min_x + 5.0, 15.0, win_w, 1, false, true, true),
+            Some(HeaderItem::WindowButton(HeaderButton::Minimize)),
+            "Hit testing Minimize button must return Minimize window button"
+        );
+    }
+
+    // 2. Verify Staged/Unstaged Button Removed from Code Review Top Bar
+    let (ux, uy, uw, uh) = CodeReviewLayout::stage_toggle_btn_rect(0.0, 0.0);
+    assert_eq!(
+        (ux, uy, uw, uh),
+        (0.0, 0.0, 0.0, 0.0),
+        "Stage toggle button must be zeroed out in Code Review top bar"
+    );
+
+    let (tx, _ty, tw, _th) = CodeReviewLayout::toggle_collapse_all_btn_rect(0.0, 0.0);
+    assert!(
+        tx < 100.0,
+        "Collapse all toggle button must be shifted left next to sidebar toggle"
+    );
+    assert!(tw > 50.0);
+
+    // 3. Verify Per-Terminal Git Stats and Switching
+    let base_dir =
+        std::env::temp_dir().join(format!("akssora_git_stats_test_{}", std::process::id()));
+    let repo_dir = base_dir.join("active_repo");
+    let non_git_dir = base_dir.join("other_folder");
+    let _ = std::fs::remove_dir_all(&base_dir);
+    std::fs::create_dir_all(repo_dir.join(".git")).unwrap();
+    std::fs::create_dir_all(&non_git_dir).unwrap();
+
+    let mut app = App::new();
+
+    // Terminal A created in repo_dir
+    let term_a = app.open_terminal_tab_in(Some(&repo_dir));
+    app.code_review.diff.total_additions = 42;
+    app.code_review.diff.total_deletions = 8;
+    app.sync_header_git_state_for_active_terminal();
+
+    assert!(
+        app.header.is_git_repo,
+        "Terminal A must be recognized as git repo"
+    );
+    assert_eq!(
+        app.header.git_additions, 42,
+        "Terminal A must have 42 additions"
+    );
+    assert_eq!(
+        app.header.git_deletions, 8,
+        "Terminal A must have 8 deletions"
+    );
+
+    // Save Terminal A state
+    app.save_active_terminal_code_review();
+
+    // Terminal B created in non-git directory
+    let term_b = app.open_terminal_tab_in(Some(&non_git_dir));
+    assert_ne!(term_a, term_b);
+    assert!(!app.header.is_git_repo, "Terminal B must not be a git repo");
+    assert_eq!(
+        app.header.git_additions, 0,
+        "Terminal B must have 0 additions"
+    );
+    assert_eq!(
+        app.header.git_deletions, 0,
+        "Terminal B must have 0 deletions"
+    );
+
+    // Switch back to Terminal A: restores 42 additions and 8 deletions
+    app.select_tab(0);
+    assert!(
+        app.header.is_git_repo,
+        "Terminal A must be git repo upon selection"
+    );
+    assert_eq!(
+        app.header.git_additions, 42,
+        "Terminal A additions must be restored"
+    );
+    assert_eq!(
+        app.header.git_deletions, 8,
+        "Terminal A deletions must be restored"
+    );
+
+    // 4. Verify Sidebar File Diff Hover Suppresses Tooltip
+    // Tooltip for SelectFile or SelectTreeFile must be None (mouse hover highlight is enough)
+    let tip = akssora_terminal_app::app::tooltips::code_review::check_code_review_tooltip(
+        &app, 0.0, 0.0, 0.0, 0.0, 800.0, 600.0,
+    );
+    // When hovering over non-action regions or file selection, no "View File Diff" tooltip
+    if let Some(t) = tip {
+        assert_ne!(
+            t.text, "View File Diff",
+            "Must not display 'View File Diff' tooltip"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&base_dir);
+}
+
+#[test]
+fn test_accordion_collapse_stationary_viewport_and_continuous_scrolling() {
+    use akssora_git::{DiffHunk, DiffLine, DiffLineType, FileDiff, FileGitStatus, RepoDiff};
+    use akssora_terminal_app::App;
+    use akssora_terminal_ui::CodeReviewLayout;
+    use std::path::PathBuf;
+
+    let base_dir =
+        std::env::temp_dir().join(format!("akssora_collapse_test_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base_dir);
+    std::fs::create_dir_all(base_dir.join(".git")).unwrap();
+
+    let make_file = |name: &str, lines: usize| FileDiff {
+        path: PathBuf::from(name),
+        old_path: None,
+        status: FileGitStatus::Modified,
+        hunks: vec![DiffHunk {
+            old_start: 1,
+            old_lines: lines,
+            new_start: 1,
+            new_lines: lines,
+            header: format!("@@ -1,{} +1,{} @@", lines, lines),
+            lines: (0..lines)
+                .map(|i| DiffLine {
+                    line_type: DiffLineType::Add,
+                    content: format!("Line {}\n", i),
+                    old_line_num: None,
+                    new_line_num: Some(i + 1),
+                })
+                .collect(),
+        }],
+        additions: lines,
+        deletions: 0,
+        is_binary: false,
+        line_count: lines,
+    };
+
+    let repo_diff = RepoDiff {
+        files: vec![
+            make_file("file0.rs", 10),
+            make_file("file1.rs", 50),
+            make_file("file2.rs", 50),
+        ],
+        files_changed: 3,
+        total_additions: 110,
+        total_deletions: 0,
+    };
+
+    let mut app = App::new();
+    let _term = app.open_terminal_tab_in(Some(&base_dir));
+    app.open_code_review_for(&base_dir);
+    app.code_review.is_full_view = true;
+    app.code_review.diff = repo_diff;
+
+    let win_w = 1000.0;
+    let win_h = 800.0;
+    let top_h = 40.0;
+    let ws_x = 0.0;
+
+    let (vx, vy, _vw, vh) =
+        CodeReviewLayout::diff_viewport_rect(&app.code_review, ws_x, top_h, win_w, win_h - top_h);
+    let offset1 = app.code_review.card_y_offset_for_file(1, vh);
+    let card1_h_expanded = CodeReviewLayout::card_height_for_file_state(
+        &app.code_review.diff.files[1],
+        false,
+        false,
+        vh,
+    );
+
+    // ── 1. Case A: Collapse accordion below vy (card_top >= vy) ─────────
+    app.code_review.diff_scroll_y = 0.0;
+    app.code_review.active_file_idx = Some(1);
+
+    // Click header of file 1
+    let card1_x = vx + 16.0;
+    let header1_y = vy + offset1 - app.code_review.diff_scroll_y;
+
+    app.handle_code_review_click(card1_x + 50.0, header1_y + 10.0, win_w, win_h, top_h, ws_x);
+
+    // File 1 must now be collapsed
+    assert!(
+        app.code_review
+            .is_file_collapsed(&PathBuf::from("file1.rs")),
+        "File 1 must be collapsed"
+    );
+    // Viewport must remain stationary: diff_scroll_y stays 0.0
+    assert_eq!(
+        app.code_review.diff_scroll_y, 0.0,
+        "Viewport must remain stationary when collapsing"
+    );
+    // active_file_idx must not jump to file 0 or file 2
+    assert_eq!(
+        app.code_review.active_file_idx, None,
+        "active_file_idx must not jump or focus to another accordion"
+    );
+    // Subsequent accordions move up as part of normal document reflow
+    let offset2_after = app.code_review.card_y_offset_for_file(2, vh);
+    let expected_offset2 =
+        offset1 + CodeReviewLayout::CARD_HEADER_HEIGHT + CodeReviewLayout::CARD_MARGIN_BOTTOM;
+    assert_eq!(
+        offset2_after, expected_offset2,
+        "File 2 must move up naturally following file 1 collapse"
+    );
+
+    // ── 2. Expand file 1 again ──────────────────────────────────────────
+    app.handle_code_review_click(card1_x + 50.0, header1_y + 10.0, win_w, win_h, top_h, ws_x);
+    assert!(
+        !app.code_review
+            .is_file_collapsed(&PathBuf::from("file1.rs"))
+    );
+
+    // ── 3. Case B: Collapse accordion while scrolled into it (sticky header at vy) ───
+    // User scrolls so that file 1's top is 150px above vy; its header is sticky at vy
+    app.code_review.diff_scroll_y = offset1 + 150.0;
+    app.code_review.active_file_idx = Some(1);
+
+    let card1_top_before = vy + offset1 - app.code_review.diff_scroll_y;
+    assert!(card1_top_before < vy, "Card top is above viewport");
+    let sticky_y = CodeReviewLayout::card_header_y(card1_top_before, card1_h_expanded, false, vy);
+    assert_eq!(sticky_y, vy, "Header must be sticky at vy");
+
+    // Click sticky header at vy
+    app.handle_code_review_click(card1_x + 50.0, vy + 10.0, win_w, win_h, top_h, ws_x);
+
+    // File 1 must be collapsed
+    assert!(
+        app.code_review
+            .is_file_collapsed(&PathBuf::from("file1.rs"))
+    );
+    // Scroll anchoring must keep file 1's collapsed header at vy without jumping
+    assert_eq!(
+        app.code_review.diff_scroll_y, offset1,
+        "diff_scroll_y must be anchored to offset1 so collapsed header stays at vy"
+    );
+    let card1_top_after = vy + offset1 - app.code_review.diff_scroll_y;
+    assert_eq!(
+        card1_top_after, vy,
+        "Collapsed card header must remain exactly at vy"
+    );
+    assert_eq!(
+        app.code_review.active_file_idx, None,
+        "Must not focus or jump to another accordion"
+    );
+
+    // ── 4. Verify continuous scrolling in both directions ───────────────
+    // Can scroll up towards file 0
+    app.code_review.scroll_diff(-50.0, vh);
+    assert!(
+        app.code_review.diff_scroll_y < offset1,
+        "Must scroll smoothly upward towards file 0"
+    );
+    // Can scroll down towards file 2
+    app.code_review.scroll_diff(100.0, vh);
+    assert!(
+        app.code_review.diff_scroll_y > offset1,
+        "Must scroll smoothly downward towards file 2"
+    );
+
+    let _ = std::fs::remove_dir_all(&base_dir);
+}
+
+#[test]
+fn test_code_review_open_file_in_editor_and_state_preservation() {
+    use akssora_git::{DiffHunk, DiffLine, DiffLineType, FileDiff, FileGitStatus, RepoDiff};
+    use akssora_terminal_app::App;
+    use akssora_terminal_ui::TabKind;
+    use std::path::PathBuf;
+
+    let test_id = std::process::id();
+    let repo_a = std::env::temp_dir().join(format!("akssora_open_file_repo_a_{test_id}"));
+    let repo_b = std::env::temp_dir().join(format!("akssora_open_file_repo_b_{test_id}"));
+    let _ = std::fs::remove_dir_all(&repo_a);
+    let _ = std::fs::remove_dir_all(&repo_b);
+
+    std::fs::create_dir_all(repo_a.join(".git")).unwrap();
+    std::fs::create_dir_all(repo_a.join("src/nested")).unwrap();
+    std::fs::create_dir_all(repo_b.join(".git")).unwrap();
+
+    let file_a_path = repo_a.join("src/nested/file with spaces.rs");
+    std::fs::write(
+        &file_a_path,
+        "fn hello_repo_a() {\n    println!(\"A\");\n}\n",
+    )
+    .unwrap();
+
+    let file_b_path = repo_b.join("main.rs");
+    std::fs::write(
+        &file_b_path,
+        "fn hello_repo_b() {\n    println!(\"B\");\n}\n",
+    )
+    .unwrap();
+
+    let diff_file_a = FileDiff {
+        path: PathBuf::from("src/nested/file with spaces.rs"),
+        old_path: None,
+        status: FileGitStatus::Modified,
+        hunks: vec![DiffHunk {
+            old_start: 1,
+            old_lines: 3,
+            new_start: 1,
+            new_lines: 3,
+            header: "@@ -1,3 +1,3 @@".to_string(),
+            lines: vec![DiffLine {
+                line_type: DiffLineType::Add,
+                content: "fn hello_repo_a() {\n".to_string(),
+                old_line_num: None,
+                new_line_num: Some(1),
+            }],
+        }],
+        additions: 1,
+        deletions: 0,
+        is_binary: false,
+        line_count: 3,
+    };
+
+    let diff_deleted = FileDiff {
+        path: PathBuf::from("deleted_old.rs"),
+        old_path: None,
+        status: FileGitStatus::Deleted,
+        hunks: vec![DiffHunk {
+            old_start: 1,
+            old_lines: 2,
+            new_start: 0,
+            new_lines: 0,
+            header: "@@ -1,2 +0,0 @@".to_string(),
+            lines: vec![
+                DiffLine {
+                    line_type: DiffLineType::Delete,
+                    content: "old line 1\n".to_string(),
+                    old_line_num: Some(1),
+                    new_line_num: None,
+                },
+                DiffLine {
+                    line_type: DiffLineType::Delete,
+                    content: "old line 2\n".to_string(),
+                    old_line_num: Some(2),
+                    new_line_num: None,
+                },
+            ],
+        }],
+        additions: 0,
+        deletions: 2,
+        is_binary: false,
+        line_count: 2,
+    };
+
+    let mut app = App::new();
+
+    // 1. Create Terminal A and open Code Review in Repo A
+    let term_a = app.open_terminal_tab_in(Some(&repo_a));
+    assert_eq!(term_a, 1);
+    app.open_code_review_for(&repo_a);
+    app.code_review.diff = RepoDiff {
+        files: vec![diff_file_a.clone(), diff_deleted.clone()],
+        files_changed: 2,
+        total_additions: 1,
+        total_deletions: 2,
+    };
+    assert!(
+        app.is_code_review_open(),
+        "Code Review must be open in Terminal A"
+    );
+
+    // 2. Click "Open File in Editor" for the file with spaces and nested path (idx 0)
+    let full_path_a = repo_a.join(&diff_file_a.path);
+    app.open_editor_file(&full_path_a);
+
+    // Verify Editor tab was created and selected
+    let active_tab = app.tab_manager.active_tab().expect("Active tab exists");
+    assert!(
+        matches!(active_tab.kind, TabKind::Editor { .. }),
+        "Must switch to Editor tab"
+    );
+    assert!(
+        !app.is_code_review_open(),
+        "Code Review must not be open while on an Editor tab"
+    );
+
+    // Verify document loaded properly
+    assert_eq!(app.editor_active_file.as_ref(), Some(&full_path_a));
+    assert!(app.editor_open_files.contains(&full_path_a));
+    {
+        let doc = app.active_editor().expect("Active editor document exists");
+        assert!(
+            !doc.inline_diff,
+            "Editor document must not have inline_diff forced"
+        );
+        assert_eq!(doc.cursor, (0, 0));
+        assert!(!doc.dirty);
+        assert!(doc.buffer.to_string_content().contains("fn hello_repo_a()"));
+    }
+
+    // 3. User makes unsaved edits and moves cursor in the editor
+    {
+        let doc = app.active_editor_mut().expect("Active editor mut exists");
+        doc.cursor = (1, 4);
+        doc.buffer.insert_str(1, 4, " // modified");
+        doc.dirty = true;
+        doc.scroll_row = 5;
+    }
+
+    // 4. Switch back to Terminal A
+    let term_a_pos = app
+        .tab_manager
+        .tabs()
+        .iter()
+        .position(|t| matches!(t.kind, TabKind::Terminal))
+        .expect("Terminal tab exists");
+    app.select_tab(term_a_pos);
+
+    // Code Review in Terminal A is restored
+    assert!(
+        app.is_code_review_open(),
+        "Terminal A's Code Review must be restored"
+    );
+    assert_eq!(app.code_review.repo_root, repo_a);
+
+    // 5. Click "Open File in Editor" again for the same file
+    app.open_editor_file(&full_path_a);
+
+    // Must focus existing editor tab without duplicating or losing unsaved edits
+    assert_eq!(
+        app.editor_open_files
+            .iter()
+            .filter(|p| **p == full_path_a)
+            .count(),
+        1,
+        "Must not duplicate open file tab"
+    );
+    {
+        let doc = app.active_editor().expect("Active editor exists");
+        assert!(doc.dirty, "Unsaved changes must be preserved");
+        assert_eq!(doc.cursor, (1, 4), "Cursor position must be preserved");
+        assert_eq!(doc.scroll_row, 5, "Scroll position must be preserved");
+        assert!(
+            doc.buffer.to_string_content().contains("// modified"),
+            "Edited buffer content must be preserved"
+        );
+    }
+
+    // 6. Test opening a deleted file from Code Review
+    let deleted_full_path = repo_a.join(&diff_deleted.path);
+    app.select_tab(term_a_pos);
+    app.open_editor_file(&deleted_full_path);
+    {
+        let doc = app.active_editor().expect("Deleted file doc exists");
+        assert!(doc.is_deleted, "Deleted file must be flagged as deleted");
+        assert!(
+            doc.buffer.to_string_content().contains("old line 1"),
+            "Deleted file content must be loaded from diff hunks"
+        );
+    }
+
+    // 7. Test Terminal B in Repo B does not leak or resolve to Repo A
+    let term_b = app.open_terminal_tab_in(Some(&repo_b));
+    assert_eq!(term_b, 3);
+    app.open_code_review_for(&repo_b);
+    let diff_file_b = FileDiff {
+        path: PathBuf::from("main.rs"),
+        old_path: None,
+        status: FileGitStatus::Modified,
+        hunks: vec![],
+        additions: 1,
+        deletions: 0,
+        is_binary: false,
+        line_count: 1,
+    };
+    app.code_review.diff = RepoDiff {
+        files: vec![diff_file_b.clone()],
+        files_changed: 1,
+        total_additions: 1,
+        total_deletions: 0,
+    };
+    assert_eq!(app.code_review.repo_root, repo_b);
+
+    // Open file from Terminal B's Code Review
+    let full_path_b = repo_b.join(&diff_file_b.path);
+    app.open_editor_file(&full_path_b);
+    assert_eq!(app.editor_active_file.as_ref(), Some(&full_path_b));
+    {
+        let doc = app.active_editor().expect("Repo B doc exists");
+        assert!(doc.buffer.to_string_content().contains("fn hello_repo_b()"));
+    }
+
+    // Cleanup temp dirs
+    let _ = std::fs::remove_dir_all(&repo_a);
+    let _ = std::fs::remove_dir_all(&repo_b);
 }

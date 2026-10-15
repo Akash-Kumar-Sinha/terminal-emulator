@@ -17,15 +17,21 @@ impl App {
         let show_sidebar = self.config.tab_layout.show_sidebar();
         let sb_w = self.sidebar.effective_width(show_sidebar);
         let exp_w = self.explorer.effective_width();
-        let ws_w = (win_w as f32 - sb_w - exp_w).max(100.0);
         let top_h = self.header.height;
         let tab_bar_h = if !self.editor_open_files.is_empty() {
             28.0
         } else {
             0.0
         };
-        let content_h = (win_h as f32 - top_h - tab_bar_h - 30.0).max(cell_h);
-        let visible_rows = (content_h / cell_h).floor() as usize;
+        let (ws_w, ws_h) =
+            if is_code_review && let Some((_, _, cr_w, cr_h)) = self.code_review_bounds() {
+                (cr_w, cr_h)
+            } else {
+                let ws_w = (win_w as f32 - sb_w - exp_w).max(100.0);
+                let ws_h = (win_h as f32 - top_h - tab_bar_h - 30.0).max(cell_h);
+                (ws_w, ws_h)
+            };
+        let visible_rows = (ws_h / cell_h).floor() as usize;
 
         let gutter_w = if let Some(doc) = self.active_editor() {
             if doc.line_numbers

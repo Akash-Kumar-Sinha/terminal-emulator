@@ -14,7 +14,7 @@ use crate::quad::push_quad;
 use crate::vertex::GlyphVertex;
 
 pub use cards::render_file_diff_card;
-pub use dialog::render_commit_dialog;
+pub use dialog::{render_commit_dialog, render_discard_dialog};
 pub use header::render_header;
 pub use line_popup::render_line_action_popup;
 pub use scrollbar::render_vertical_scrollbar;
@@ -196,19 +196,19 @@ pub fn render_code_review_panel(
     if let Some((sbx, sby, sbw, sbh)) =
         CodeReviewLayout::sidebar_rect(model, ws_x, ws_y, ws_w, ws_h)
     {
-        let sidebar_total_h = model.visible_tree_items().len() as f32
-            * CodeReviewLayout::FILE_ROW_HEIGHT
-            + CodeReviewLayout::SIDEBAR_TOOLBAR_HEIGHT
-            + 16.0;
-        let max_sb_scroll = (sidebar_total_h - sbh).max(0.0);
+        let tb_h = CodeReviewLayout::SIDEBAR_TOOLBAR_HEIGHT;
+        let list_viewport_h = (sbh - tb_h).max(0.0);
+        let sidebar_total_h =
+            model.visible_tree_items().len() as f32 * CodeReviewLayout::FILE_ROW_HEIGHT + 16.0;
+        let max_sb_scroll = (sidebar_total_h - list_viewport_h).max(0.0);
         let clamped_sb_scroll = model.sidebar_scroll_y.clamp(0.0, max_sb_scroll);
         scrollbar::render_vertical_scrollbar(
             verts,
             theme,
             sbx,
-            sby,
+            sby + tb_h,
             sbw,
-            sbh,
+            list_viewport_h,
             sidebar_total_h,
             clamped_sb_scroll,
             solid_uv,
@@ -264,6 +264,14 @@ pub fn render_code_review_panel(
     if model.commit_dialog_open {
         dialog::render_commit_dialog(
             renderer, queue, fonts, ui_fonts, theme, model, ws_x, ws_y, ws_w, ws_h, verts,
+            solid_uv, circle_uv, screen_w, screen_h,
+        );
+    }
+
+    // ── 7. Discard Confirmation Modal Dialog ──────────────────────────────────
+    if let Some(ref target) = model.confirm_discard {
+        dialog::render_discard_dialog(
+            renderer, queue, fonts, ui_fonts, theme, target, ws_x, ws_y, ws_w, ws_h, verts,
             solid_uv, circle_uv, screen_w, screen_h,
         );
     }

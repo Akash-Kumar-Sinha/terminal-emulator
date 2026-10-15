@@ -125,6 +125,7 @@ impl App {
             if buffer_has_text {
                 // Buffer has typed input: send EOF byte (\x04) without closing session
                 if let Some(block) = self.active_block_mut() {
+                    block.shell.reset_scroll();
                     block.shell.send(b"\x04");
                     if let Some(pane_id) = self.active_pane_id()
                         && let Some(buf) = self.command_buffers.get_mut(&pane_id)
@@ -167,27 +168,9 @@ impl App {
         // Ctrl+Tab / Ctrl+Shift+Tab: switch next / previous tab
         if ctrl && matches!(&event.logical_key, Key::Named(NamedKey::Tab)) {
             if shift {
-                let prev = if self.tab_manager.active_index() == 0 {
-                    self.tab_manager.len().saturating_sub(1)
-                } else {
-                    self.tab_manager.active_index() - 1
-                };
-                self.tab_manager.select(prev);
+                self.prev_tab();
             } else {
-                let next = (self.tab_manager.active_index() + 1) % self.tab_manager.len().max(1);
-                self.tab_manager.select(next);
-            }
-            self.sync_active_tab_state();
-            if let Some(active_id) = self.tab_manager.active_id()
-                && let Some(tree) = self.split_trees.get(&active_id)
-                && !tree.contains_leaf(self.split_manager.active_pane_id.unwrap_or(0))
-                && let Some(first_leaf) = tree.all_leaf_ids().first().copied()
-            {
-                self.split_manager.focus_pane(first_leaf);
-            }
-            self.layout_blocks();
-            if let Some(win) = self.window.as_ref() {
-                win.request_redraw();
+                self.next_tab();
             }
             return true;
         }

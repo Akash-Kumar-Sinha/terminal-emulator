@@ -10,6 +10,17 @@ impl App {
         top_h: f32,
         sb_w: f32,
     ) {
+        // 4.9 Code Review split divider drag start check
+        if let Some((div_x, div_y, div_w, div_h)) = self.code_review_split_divider_rect()
+            && mx >= div_x - 4.0
+            && mx <= div_x + div_w + 4.0
+            && my >= div_y
+            && my <= div_y + div_h
+        {
+            self.code_review.is_resizing_split = true;
+            return;
+        }
+
         // 5. Split divider drag start check
         if let Some(active_tab_id) = self.tab_manager.active_id()
             && let Some(tree) = self.split_trees.get(&active_tab_id)
@@ -36,6 +47,7 @@ impl App {
         }
 
         // 6. Focus pane under cursor, start selection tracking or pane drag
+        self.header.is_code_review_focused = false;
         self.focus_pane_at(mx, my);
 
         if let Some((pane_id, _, _, _, _)) = self.pane_at(mx, my) {
@@ -149,6 +161,7 @@ impl App {
         }
 
         self.code_review.is_resizing_sidebar = false;
+        self.code_review.is_resizing_split = false;
         self.split_manager.drag_state = None;
 
         // Handle pane drag drop completion

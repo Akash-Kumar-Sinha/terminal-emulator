@@ -66,6 +66,7 @@ impl App {
             && !text.is_empty()
             && let Some(block) = self.active_block_mut()
         {
+            block.shell.reset_scroll();
             block.shell.paste_text(&text);
             if let Some(win) = self.window.as_ref() {
                 win.request_redraw();

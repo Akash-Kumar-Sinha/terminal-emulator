@@ -69,14 +69,14 @@ impl CodeReviewLayout {
         (ws_x + 12.0, ws_y + 8.0, 32.0, 26.0)
     }
 
-    // INFO: Bounding box for the staged vs unstaged code toggle button in the top header.
-    pub fn stage_toggle_btn_rect(ws_x: f32, ws_y: f32) -> (f32, f32, f32, f32) {
-        (ws_x + 50.0, ws_y + 8.0, 180.0, 26.0)
+    // INFO: Bounding box for the staged vs unstaged code toggle button in the top header (deprecated).
+    pub fn stage_toggle_btn_rect(_ws_x: f32, _ws_y: f32) -> (f32, f32, f32, f32) {
+        (0.0, 0.0, 0.0, 0.0)
     }
 
     // INFO: Bounding box for the toggle collapse/expand all button in the top header.
     pub fn toggle_collapse_all_btn_rect(ws_x: f32, ws_y: f32) -> (f32, f32, f32, f32) {
-        (ws_x + 236.0, ws_y + 8.0, 120.0, 26.0)
+        (ws_x + 50.0, ws_y + 8.0, 110.0, 26.0)
     }
 
     // INFO: Bounding box for the collapse all accordions button in the top header (backwards compatible).
@@ -96,7 +96,17 @@ impl CodeReviewLayout {
 
     // INFO: Bounding box for the Commit modal trigger button in the top header.
     pub fn commit_btn_rect(ws_x: f32, ws_y: f32, ws_w: f32) -> (f32, f32, f32, f32) {
-        (ws_x + ws_w - 96.0, ws_y + 8.0, 84.0, 26.0)
+        (ws_x + ws_w - 158.0, ws_y + 8.0, 84.0, 26.0)
+    }
+
+    // INFO: Bounding box for the expand/restore full view toggle button in the top header.
+    pub fn expand_btn_rect(ws_x: f32, ws_y: f32, ws_w: f32) -> (f32, f32, f32, f32) {
+        (ws_x + ws_w - 66.0, ws_y + 8.0, 26.0, 26.0)
+    }
+
+    // INFO: Bounding box for the close panel button in the top header.
+    pub fn close_btn_rect(ws_x: f32, ws_y: f32, ws_w: f32) -> (f32, f32, f32, f32) {
+        (ws_x + ws_w - 34.0, ws_y + 8.0, 26.0, 26.0)
     }
 
     // INFO: Bounding box for the sidebar Tree/List view toggle button in the sidebar toolbar.
@@ -110,7 +120,11 @@ impl CodeReviewLayout {
 
     // INFO: Bounding box for the Full File view toggle button in an accordion card header.
     pub fn card_full_file_btn_rect(card_x: f32, card_y: f32, card_w: f32) -> (f32, f32, f32, f32) {
-        (card_x + card_w - 168.0, card_y + 6.0, 74.0, 24.0)
+        let btn_w = 90.0;
+        let spacing = 8.0;
+        let right_offset = 86.0;
+        let x = card_x + card_w - right_offset - spacing - btn_w;
+        (x, card_y + 6.0, btn_w, 24.0)
     }
 
     // INFO: Bounding box for the Open File in Editor action button in an accordion card header.
@@ -126,6 +140,137 @@ impl CodeReviewLayout {
     // INFO: Bounding box for the Discard Changes action button in an accordion card header.
     pub fn card_discard_btn_rect(card_x: f32, card_y: f32, card_w: f32) -> (f32, f32, f32, f32) {
         (card_x + card_w - 86.0, card_y + 6.0, 24.0, 24.0)
+    }
+
+    // INFO: Bounding box for the modal confirmation dialog when discarding file changes.
+    pub fn discard_dialog_rect(ws_x: f32, ws_y: f32, ws_w: f32, ws_h: f32) -> (f32, f32, f32, f32) {
+        let modal_w = 440.0;
+        let modal_h = 160.0;
+        let modal_x = ws_x + (ws_w - modal_w) * 0.5;
+        let modal_y = ws_y + (ws_h - modal_h) * 0.5;
+        (modal_x, modal_y, modal_w, modal_h)
+    }
+
+    // INFO: Bounding boxes for Cancel and Discard buttons in the discard confirmation dialog.
+    #[allow(clippy::type_complexity)]
+    pub fn discard_dialog_buttons_rect(
+        ws_x: f32,
+        ws_y: f32,
+        ws_w: f32,
+        ws_h: f32,
+    ) -> ((f32, f32, f32, f32), (f32, f32, f32, f32)) {
+        let (mx, my, mw, mh) = Self::discard_dialog_rect(ws_x, ws_y, ws_w, ws_h);
+        let btn_y = my + mh - 42.0;
+        let btn_h = 28.0;
+        let btn_w = 80.0;
+        let confirm_rect = (mx + mw - btn_w - 20.0, btn_y, btn_w, btn_h);
+        let cancel_rect = (mx + mw - 2.0 * btn_w - 30.0, btn_y, btn_w, btn_h);
+        (cancel_rect, confirm_rect)
+    }
+
+    pub const SIDEBAR_FILE_BTN_WIDTH: f32 = 22.0;
+    pub const SIDEBAR_FILE_BTN_HEIGHT: f32 = 20.0;
+    pub const SIDEBAR_FILE_BTN_GAP: f32 = 4.0;
+    pub const SIDEBAR_FILE_MARGIN_RIGHT: f32 = 8.0;
+
+    // INFO: Computes bounding rects for sidebar file hover action buttons.
+    // For unstaged file: (open_rect, revert_rect, Some(stage_rect))
+    // For staged file: (open_rect, unstage_rect, None)
+    #[allow(clippy::type_complexity)]
+    pub fn sidebar_file_action_rects(
+        sbx: f32,
+        sbw: f32,
+        row_y: f32,
+        is_staged: bool,
+    ) -> (
+        (f32, f32, f32, f32),
+        (f32, f32, f32, f32),
+        Option<(f32, f32, f32, f32)>,
+    ) {
+        let btn_y = row_y + (Self::FILE_ROW_HEIGHT - Self::SIDEBAR_FILE_BTN_HEIGHT) * 0.5;
+        let right_x = sbx + sbw - Self::SIDEBAR_FILE_MARGIN_RIGHT;
+
+        if is_staged {
+            let unstage_x = right_x - Self::SIDEBAR_FILE_BTN_WIDTH;
+            let unstage_rect = (
+                unstage_x,
+                btn_y,
+                Self::SIDEBAR_FILE_BTN_WIDTH,
+                Self::SIDEBAR_FILE_BTN_HEIGHT,
+            );
+            let open_x = unstage_x - Self::SIDEBAR_FILE_BTN_GAP - Self::SIDEBAR_FILE_BTN_WIDTH;
+            let open_rect = (
+                open_x,
+                btn_y,
+                Self::SIDEBAR_FILE_BTN_WIDTH,
+                Self::SIDEBAR_FILE_BTN_HEIGHT,
+            );
+            (open_rect, unstage_rect, None)
+        } else {
+            let stage_x = right_x - Self::SIDEBAR_FILE_BTN_WIDTH;
+            let stage_rect = (
+                stage_x,
+                btn_y,
+                Self::SIDEBAR_FILE_BTN_WIDTH,
+                Self::SIDEBAR_FILE_BTN_HEIGHT,
+            );
+            let revert_x = stage_x - Self::SIDEBAR_FILE_BTN_GAP - Self::SIDEBAR_FILE_BTN_WIDTH;
+            let revert_rect = (
+                revert_x,
+                btn_y,
+                Self::SIDEBAR_FILE_BTN_WIDTH,
+                Self::SIDEBAR_FILE_BTN_HEIGHT,
+            );
+            let open_x = revert_x - Self::SIDEBAR_FILE_BTN_GAP - Self::SIDEBAR_FILE_BTN_WIDTH;
+            let open_rect = (
+                open_x,
+                btn_y,
+                Self::SIDEBAR_FILE_BTN_WIDTH,
+                Self::SIDEBAR_FILE_BTN_HEIGHT,
+            );
+            (open_rect, revert_rect, Some(stage_rect))
+        }
+    }
+
+    // INFO: Computes bounding rects for sidebar group (section or directory) hover action buttons.
+    // For unstaged group: (revert_rect, Some(stage_rect))
+    // For staged group: (unstage_rect, None)
+    #[allow(clippy::type_complexity)]
+    pub fn sidebar_group_action_rects(
+        sbx: f32,
+        sbw: f32,
+        row_y: f32,
+        is_staged: bool,
+    ) -> ((f32, f32, f32, f32), Option<(f32, f32, f32, f32)>) {
+        let btn_y = row_y + (Self::FILE_ROW_HEIGHT - Self::SIDEBAR_FILE_BTN_HEIGHT) * 0.5;
+        let right_x = sbx + sbw - Self::SIDEBAR_FILE_MARGIN_RIGHT;
+
+        if is_staged {
+            let unstage_x = right_x - Self::SIDEBAR_FILE_BTN_WIDTH;
+            let unstage_rect = (
+                unstage_x,
+                btn_y,
+                Self::SIDEBAR_FILE_BTN_WIDTH,
+                Self::SIDEBAR_FILE_BTN_HEIGHT,
+            );
+            (unstage_rect, None)
+        } else {
+            let stage_x = right_x - Self::SIDEBAR_FILE_BTN_WIDTH;
+            let stage_rect = (
+                stage_x,
+                btn_y,
+                Self::SIDEBAR_FILE_BTN_WIDTH,
+                Self::SIDEBAR_FILE_BTN_HEIGHT,
+            );
+            let revert_x = stage_x - Self::SIDEBAR_FILE_BTN_GAP - Self::SIDEBAR_FILE_BTN_WIDTH;
+            let revert_rect = (
+                revert_x,
+                btn_y,
+                Self::SIDEBAR_FILE_BTN_WIDTH,
+                Self::SIDEBAR_FILE_BTN_HEIGHT,
+            );
+            (revert_rect, Some(stage_rect))
+        }
     }
 
     // Left Sidebar dimensions (changed files list on the left side)
@@ -612,6 +757,31 @@ impl CodeReviewLayout {
         click_x: f32,
         click_y: f32,
     ) -> Option<CodeReviewAction> {
+        // INFO: Modal Discard Confirmation dialog hit-testing (takes highest priority).
+        if model.confirm_discard.is_some() {
+            let (cancel_rect, confirm_rect) =
+                Self::discard_dialog_buttons_rect(ws_x, ws_y, ws_w, ws_h);
+            if click_x >= confirm_rect.0
+                && click_x <= confirm_rect.0 + confirm_rect.2
+                && click_y >= confirm_rect.1
+                && click_y <= confirm_rect.1 + confirm_rect.3
+            {
+                return Some(CodeReviewAction::ConfirmDiscardOk);
+            }
+            if click_x >= cancel_rect.0
+                && click_x <= cancel_rect.0 + cancel_rect.2
+                && click_y >= cancel_rect.1
+                && click_y <= cancel_rect.1 + cancel_rect.3
+            {
+                return Some(CodeReviewAction::ConfirmDiscardCancel);
+            }
+            let (mx, my, mw, mh) = Self::discard_dialog_rect(ws_x, ws_y, ws_w, ws_h);
+            if click_x < mx || click_x > mx + mw || click_y < my || click_y > my + mh {
+                return Some(CodeReviewAction::ConfirmDiscardCancel);
+            }
+            return None;
+        }
+
         // INFO: Top Header bar action hit-testing.
         if click_y >= ws_y && click_y <= ws_y + Self::HEADER_HEIGHT {
             let (sx, sy, sw, sh) = Self::sidebar_toggle_btn_rect(ws_x, ws_y);
@@ -619,19 +789,27 @@ impl CodeReviewLayout {
                 return Some(CodeReviewAction::ToggleSidebar);
             }
 
-            let (ux, uy, uw, uh) = Self::stage_toggle_btn_rect(ws_x, ws_y);
-            if click_x >= ux && click_x <= ux + uw && click_y >= uy && click_y <= uy + uh {
-                return Some(CodeReviewAction::ToggleStaged);
-            }
-
             let (tx, ty, tw, th) = Self::toggle_collapse_all_btn_rect(ws_x, ws_y);
             if click_x >= tx && click_x <= tx + tw && click_y >= ty && click_y <= ty + th {
                 return Some(CodeReviewAction::ToggleCollapseAll);
             }
 
-            let (cx, cy, cw, ch) = Self::commit_btn_rect(ws_x, ws_y, ws_w);
-            if click_x >= cx && click_x <= cx + cw && click_y >= cy && click_y <= cy + ch {
-                return Some(CodeReviewAction::OpenCommitDialog);
+            let is_git = akssora_git::GitInspector::is_git_repo(&model.repo_root);
+            if is_git {
+                let (cx, cy, cw, ch) = Self::commit_btn_rect(ws_x, ws_y, ws_w);
+                if click_x >= cx && click_x <= cx + cw && click_y >= cy && click_y <= cy + ch {
+                    return Some(CodeReviewAction::OpenCommitDialog);
+                }
+            }
+
+            let (ex, ey, ew, eh) = Self::expand_btn_rect(ws_x, ws_y, ws_w);
+            if click_x >= ex && click_x <= ex + ew && click_y >= ey && click_y <= ey + eh {
+                return Some(CodeReviewAction::ToggleExpandView);
+            }
+
+            let (clx, cly, clw, clh) = Self::close_btn_rect(ws_x, ws_y, ws_w);
+            if click_x >= clx && click_x <= clx + clw && click_y >= cly && click_y <= cly + clh {
+                return Some(CodeReviewAction::ClosePanel);
             }
         }
 
@@ -662,11 +840,133 @@ impl CodeReviewLayout {
                 let row_idx = (rel_y / Self::FILE_ROW_HEIGHT).floor() as usize;
                 if let Some(item) = items.get(row_idx) {
                     match item {
-                        CodeReviewTreeItem::Directory { path, .. } => {
+                        CodeReviewTreeItem::SectionHeader { is_staged, .. } => {
+                            let row_top_y = sby + Self::SIDEBAR_TOOLBAR_HEIGHT + 4.0
+                                - clamped_scroll_y
+                                + row_idx as f32 * Self::FILE_ROW_HEIGHT;
+                            let (main_rect, stage_opt) =
+                                Self::sidebar_group_action_rects(sbx, sbw, row_top_y, *is_staged);
+                            if *is_staged {
+                                if click_x >= main_rect.0
+                                    && click_x <= main_rect.0 + main_rect.2
+                                    && click_y >= main_rect.1
+                                    && click_y <= main_rect.1 + main_rect.3
+                                {
+                                    return Some(CodeReviewAction::UnstageAll);
+                                }
+                            } else {
+                                if click_x >= main_rect.0
+                                    && click_x <= main_rect.0 + main_rect.2
+                                    && click_y >= main_rect.1
+                                    && click_y <= main_rect.1 + main_rect.3
+                                {
+                                    return Some(CodeReviewAction::PromptDiscardAll);
+                                }
+                                if let Some(stage_rect) = stage_opt
+                                    && click_x >= stage_rect.0
+                                    && click_x <= stage_rect.0 + stage_rect.2
+                                    && click_y >= stage_rect.1
+                                    && click_y <= stage_rect.1 + stage_rect.3
+                                {
+                                    return Some(CodeReviewAction::StageAll);
+                                }
+                            }
+                            return Some(CodeReviewAction::ToggleSectionCollapse(*is_staged));
+                        }
+                        CodeReviewTreeItem::Directory {
+                            is_staged, path, ..
+                        } => {
+                            let row_top_y = sby + Self::SIDEBAR_TOOLBAR_HEIGHT + 4.0
+                                - clamped_scroll_y
+                                + row_idx as f32 * Self::FILE_ROW_HEIGHT;
+                            let (main_rect, stage_opt) =
+                                Self::sidebar_group_action_rects(sbx, sbw, row_top_y, *is_staged);
+                            if *is_staged {
+                                if click_x >= main_rect.0
+                                    && click_x <= main_rect.0 + main_rect.2
+                                    && click_y >= main_rect.1
+                                    && click_y <= main_rect.1 + main_rect.3
+                                {
+                                    return Some(CodeReviewAction::UnstageDirectoryByPath(
+                                        path.clone(),
+                                    ));
+                                }
+                            } else {
+                                if click_x >= main_rect.0
+                                    && click_x <= main_rect.0 + main_rect.2
+                                    && click_y >= main_rect.1
+                                    && click_y <= main_rect.1 + main_rect.3
+                                {
+                                    return Some(CodeReviewAction::PromptDiscardDirectory(
+                                        path.clone(),
+                                    ));
+                                }
+                                if let Some(stage_rect) = stage_opt
+                                    && click_x >= stage_rect.0
+                                    && click_x <= stage_rect.0 + stage_rect.2
+                                    && click_y >= stage_rect.1
+                                    && click_y <= stage_rect.1 + stage_rect.3
+                                {
+                                    return Some(CodeReviewAction::StageDirectoryByPath(
+                                        path.clone(),
+                                    ));
+                                }
+                            }
                             return Some(CodeReviewAction::ToggleTreeDir(path.clone()));
                         }
-                        CodeReviewTreeItem::File { orig_idx, .. } => {
-                            return Some(CodeReviewAction::SelectFileForEdit(*orig_idx));
+                        CodeReviewTreeItem::File {
+                            is_staged,
+                            orig_idx,
+                            path,
+                            ..
+                        } => {
+                            let row_top_y = sby + Self::SIDEBAR_TOOLBAR_HEIGHT + 4.0
+                                - clamped_scroll_y
+                                + row_idx as f32 * Self::FILE_ROW_HEIGHT;
+                            let (open_rect, mid_rect, stage_opt) =
+                                Self::sidebar_file_action_rects(sbx, sbw, row_top_y, *is_staged);
+
+                            if click_x >= open_rect.0
+                                && click_x <= open_rect.0 + open_rect.2
+                                && click_y >= open_rect.1
+                                && click_y <= open_rect.1 + open_rect.3
+                            {
+                                return Some(CodeReviewAction::OpenFileInEditorByPath(
+                                    path.clone(),
+                                ));
+                            }
+
+                            if *is_staged {
+                                if click_x >= mid_rect.0
+                                    && click_x <= mid_rect.0 + mid_rect.2
+                                    && click_y >= mid_rect.1
+                                    && click_y <= mid_rect.1 + mid_rect.3
+                                {
+                                    return Some(CodeReviewAction::UnstageFileByPath(path.clone()));
+                                }
+                            } else {
+                                if click_x >= mid_rect.0
+                                    && click_x <= mid_rect.0 + mid_rect.2
+                                    && click_y >= mid_rect.1
+                                    && click_y <= mid_rect.1 + mid_rect.3
+                                {
+                                    return Some(CodeReviewAction::PromptDiscardFile(path.clone()));
+                                }
+                                if let Some(stage_rect) = stage_opt
+                                    && click_x >= stage_rect.0
+                                    && click_x <= stage_rect.0 + stage_rect.2
+                                    && click_y >= stage_rect.1
+                                    && click_y <= stage_rect.1 + stage_rect.3
+                                {
+                                    return Some(CodeReviewAction::StageFileByPath(path.clone()));
+                                }
+                            }
+
+                            return Some(CodeReviewAction::SelectTreeFile {
+                                is_staged: *is_staged,
+                                orig_idx: *orig_idx,
+                                path: path.clone(),
+                            });
                         }
                     }
                 }
@@ -789,6 +1089,7 @@ impl CodeReviewLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DiscardTarget;
     use akssora_git::{DiffHunk, DiffLine, DiffLineType, FileDiff, FileGitStatus, RepoDiff};
     use std::path::PathBuf;
 
@@ -1062,5 +1363,580 @@ mod tests {
             line_1_y + 50.0,
         );
         assert_eq!(hover_away, None);
+    }
+
+    #[test]
+    fn test_sidebar_tree_structure_compact_folders_and_sections() {
+        let staged_diff = RepoDiff {
+            files: vec![FileDiff {
+                path: PathBuf::from("src/main.rs"),
+                old_path: None,
+                status: FileGitStatus::Modified,
+                hunks: vec![],
+                additions: 2,
+                deletions: 1,
+                is_binary: false,
+                line_count: 10,
+            }],
+            total_additions: 2,
+            total_deletions: 1,
+            files_changed: 1,
+        };
+        let unstaged_diff = RepoDiff {
+            files: vec![FileDiff {
+                path: PathBuf::from("agents/skills/akssora/SKILL.md"),
+                old_path: None,
+                status: FileGitStatus::Untracked,
+                hunks: vec![],
+                additions: 50,
+                deletions: 0,
+                is_binary: false,
+                line_count: 50,
+            }],
+            total_additions: 50,
+            total_deletions: 0,
+            files_changed: 1,
+        };
+        let mut model = CodeReviewModel {
+            staged_diff,
+            unstaged_diff,
+            ..Default::default()
+        };
+
+        let items = model.visible_tree_items();
+        // Item 0: Staged Section Header
+        match &items[0] {
+            CodeReviewTreeItem::SectionHeader {
+                is_staged, count, ..
+            } => {
+                assert!(*is_staged);
+                assert_eq!(*count, 1);
+            }
+            _ => panic!("Expected Staged SectionHeader at index 0"),
+        }
+
+        // Item 1: Staged file (under src/ dir or file)
+        match &items[1] {
+            CodeReviewTreeItem::Directory {
+                is_staged,
+                display_name,
+                ..
+            } => {
+                assert!(*is_staged);
+                assert_eq!(display_name, "src");
+            }
+            CodeReviewTreeItem::File {
+                is_staged,
+                display_name,
+                ..
+            } => {
+                assert!(*is_staged);
+                assert_eq!(display_name, "main.rs");
+            }
+            _ => panic!("Expected Directory or File in Staged section"),
+        }
+
+        // SectionHeader for Changes
+        let unstaged_header_idx = items
+            .iter()
+            .position(|it| {
+                matches!(
+                    it,
+                    CodeReviewTreeItem::SectionHeader {
+                        is_staged: false,
+                        ..
+                    }
+                )
+            })
+            .expect("Changes section header should exist");
+        assert!(unstaged_header_idx > 0);
+
+        // Verify compact folder in Changes: agents/skills/akssora should be merged into a single folder!
+        let compact_dir = items.iter().find_map(|it| match it {
+            CodeReviewTreeItem::Directory {
+                is_staged: false,
+                display_name,
+                ..
+            } => Some(display_name.clone()),
+            _ => None,
+        });
+        assert_eq!(compact_dir.as_deref(), Some("agents/skills/akssora"));
+
+        // Toggle staged section collapse
+        model.toggle_section_collapse(true);
+        let items_collapsed = model.visible_tree_items();
+        assert!(items_collapsed.len() < items.len());
+        assert_eq!(
+            items_collapsed[0],
+            CodeReviewTreeItem::SectionHeader {
+                is_staged: true,
+                count: 1,
+                is_collapsed: true,
+            }
+        );
+    }
+
+    #[test]
+    fn test_sidebar_hover_action_buttons_and_dialog_hit_test() {
+        let unstaged_diff = RepoDiff {
+            files: vec![FileDiff {
+                path: PathBuf::from("test.rs"),
+                old_path: None,
+                status: FileGitStatus::Modified,
+                hunks: vec![],
+                additions: 1,
+                deletions: 0,
+                is_binary: false,
+                line_count: 5,
+            }],
+            total_additions: 1,
+            total_deletions: 0,
+            files_changed: 1,
+        };
+        let mut model = CodeReviewModel {
+            diff: unstaged_diff.clone(),
+            unstaged_diff,
+            ..Default::default()
+        };
+
+        let (sbx, sby, sbw, _sbh) =
+            CodeReviewLayout::sidebar_rect(&model, 0.0, 0.0, 1000.0, 800.0).unwrap();
+
+        // Row 0: Staged Changes header
+        // Row 1: Changes header
+        // Row 2: File test.rs
+        let row_top = sby + CodeReviewLayout::SIDEBAR_TOOLBAR_HEIGHT + 4.0;
+        let header_staged_y = row_top + 10.0;
+        let act_header_staged = CodeReviewLayout::hit_test(
+            &model,
+            0.0,
+            0.0,
+            1000.0,
+            800.0,
+            sbx + 20.0,
+            header_staged_y,
+        );
+        assert_eq!(
+            act_header_staged,
+            Some(CodeReviewAction::ToggleSectionCollapse(true))
+        );
+
+        let row_file_y = row_top + 2.0 * CodeReviewLayout::FILE_ROW_HEIGHT;
+        let (open_rect, revert_rect, stage_opt) =
+            CodeReviewLayout::sidebar_file_action_rects(sbx, sbw, row_file_y, false);
+
+        // Click on Open File button
+        let act_open = CodeReviewLayout::hit_test(
+            &model,
+            0.0,
+            0.0,
+            1000.0,
+            800.0,
+            open_rect.0 + 5.0,
+            open_rect.1 + 5.0,
+        );
+        assert_eq!(
+            act_open,
+            Some(CodeReviewAction::OpenFileInEditorByPath(PathBuf::from(
+                "test.rs"
+            )))
+        );
+
+        // Click on Revert button
+        let act_revert = CodeReviewLayout::hit_test(
+            &model,
+            0.0,
+            0.0,
+            1000.0,
+            800.0,
+            revert_rect.0 + 5.0,
+            revert_rect.1 + 5.0,
+        );
+        assert_eq!(
+            act_revert,
+            Some(CodeReviewAction::PromptDiscardFile(PathBuf::from(
+                "test.rs"
+            )))
+        );
+
+        // Click on Stage button
+        let stage_rect = stage_opt.unwrap();
+        let act_stage = CodeReviewLayout::hit_test(
+            &model,
+            0.0,
+            0.0,
+            1000.0,
+            800.0,
+            stage_rect.0 + 5.0,
+            stage_rect.1 + 5.0,
+        );
+        assert_eq!(
+            act_stage,
+            Some(CodeReviewAction::StageFileByPath(PathBuf::from("test.rs")))
+        );
+
+        // Click row outside action buttons selects file
+        let act_select = CodeReviewLayout::hit_test(
+            &model,
+            0.0,
+            0.0,
+            1000.0,
+            800.0,
+            sbx + 30.0,
+            row_file_y + 10.0,
+        );
+        assert_eq!(
+            act_select,
+            Some(CodeReviewAction::SelectTreeFile {
+                is_staged: false,
+                orig_idx: 0,
+                path: PathBuf::from("test.rs"),
+            })
+        );
+
+        // Discard Confirmation Modal hit test
+        model.confirm_discard = Some(DiscardTarget::File(PathBuf::from("test.rs")));
+        let (cancel_rect, confirm_rect) =
+            CodeReviewLayout::discard_dialog_buttons_rect(0.0, 0.0, 1000.0, 800.0);
+
+        let act_cancel = CodeReviewLayout::hit_test(
+            &model,
+            0.0,
+            0.0,
+            1000.0,
+            800.0,
+            cancel_rect.0 + 5.0,
+            cancel_rect.1 + 5.0,
+        );
+        assert_eq!(act_cancel, Some(CodeReviewAction::ConfirmDiscardCancel));
+
+        let act_confirm = CodeReviewLayout::hit_test(
+            &model,
+            0.0,
+            0.0,
+            1000.0,
+            800.0,
+            confirm_rect.0 + 5.0,
+            confirm_rect.1 + 5.0,
+        );
+        assert_eq!(act_confirm, Some(CodeReviewAction::ConfirmDiscardOk));
+
+        // Click outside dialog cancels
+        let act_outside = CodeReviewLayout::hit_test(&model, 0.0, 0.0, 1000.0, 800.0, 10.0, 10.0);
+        assert_eq!(act_outside, Some(CodeReviewAction::ConfirmDiscardCancel));
+
+        // Test section header group buttons
+        model.confirm_discard = None;
+        let (unstage_all_rect, _) =
+            CodeReviewLayout::sidebar_group_action_rects(sbx, sbw, row_top, true);
+        let act_unstage_all = CodeReviewLayout::hit_test(
+            &model,
+            0.0,
+            0.0,
+            1000.0,
+            800.0,
+            unstage_all_rect.0 + 5.0,
+            unstage_all_rect.1 + 5.0,
+        );
+        assert_eq!(act_unstage_all, Some(CodeReviewAction::UnstageAll));
+
+        let row_changes_y = row_top + CodeReviewLayout::FILE_ROW_HEIGHT;
+        let (revert_all_rect, stage_all_opt) =
+            CodeReviewLayout::sidebar_group_action_rects(sbx, sbw, row_changes_y, false);
+        let act_revert_all = CodeReviewLayout::hit_test(
+            &model,
+            0.0,
+            0.0,
+            1000.0,
+            800.0,
+            revert_all_rect.0 + 5.0,
+            revert_all_rect.1 + 5.0,
+        );
+        assert_eq!(act_revert_all, Some(CodeReviewAction::PromptDiscardAll));
+
+        let stage_all_rect = stage_all_opt.unwrap();
+        let act_stage_all = CodeReviewLayout::hit_test(
+            &model,
+            0.0,
+            0.0,
+            1000.0,
+            800.0,
+            stage_all_rect.0 + 5.0,
+            stage_all_rect.1 + 5.0,
+        );
+        assert_eq!(act_stage_all, Some(CodeReviewAction::StageAll));
+
+        // Test Directory group action buttons (folder with children)
+        let test_diff = RepoDiff {
+            files: vec![
+                FileDiff {
+                    path: PathBuf::from("src/app/main.rs"),
+                    old_path: None,
+                    status: FileGitStatus::Modified,
+                    hunks: vec![],
+                    additions: 1,
+                    deletions: 0,
+                    is_binary: false,
+                    line_count: 5,
+                },
+                FileDiff {
+                    path: PathBuf::from("staged/lib.rs"),
+                    old_path: None,
+                    status: FileGitStatus::Modified,
+                    hunks: vec![],
+                    additions: 1,
+                    deletions: 0,
+                    is_binary: false,
+                    line_count: 5,
+                },
+            ],
+            total_additions: 2,
+            total_deletions: 0,
+            files_changed: 2,
+        };
+        let dir_model = CodeReviewModel {
+            diff: test_diff.clone(),
+            unstaged_diff: test_diff,
+            is_staged: false,
+            sidebar_expanded: true,
+            ..Default::default()
+        };
+        let items = dir_model.visible_tree_items();
+        // Find unstaged Directory item index
+        let unstaged_dir_idx = items.iter().position(|it| match it {
+            CodeReviewTreeItem::Directory { is_staged, .. } => !*is_staged,
+            _ => false,
+        });
+        if let Some(dir_idx) = unstaged_dir_idx {
+            let row_dir_y = row_top + dir_idx as f32 * CodeReviewLayout::FILE_ROW_HEIGHT;
+            let (dir_revert_rect, dir_stage_opt) =
+                CodeReviewLayout::sidebar_group_action_rects(sbx, sbw, row_dir_y, false);
+            let act_dir_stage = CodeReviewLayout::hit_test(
+                &dir_model,
+                0.0,
+                0.0,
+                1000.0,
+                800.0,
+                dir_stage_opt.unwrap().0 + 5.0,
+                dir_stage_opt.unwrap().1 + 5.0,
+            );
+            assert_eq!(
+                act_dir_stage,
+                Some(CodeReviewAction::StageDirectoryByPath(PathBuf::from(
+                    "src/app"
+                )))
+            );
+
+            let act_dir_revert = CodeReviewLayout::hit_test(
+                &dir_model,
+                0.0,
+                0.0,
+                1000.0,
+                800.0,
+                dir_revert_rect.0 + 5.0,
+                dir_revert_rect.1 + 5.0,
+            );
+            assert_eq!(
+                act_dir_revert,
+                Some(CodeReviewAction::PromptDiscardDirectory(PathBuf::from(
+                    "src/app"
+                )))
+            );
+        }
+
+        // Test DiscardTarget::Directory confirmation dialog hit test
+        let mut dir_dialog_model = dir_model.clone();
+        dir_dialog_model.confirm_discard = Some(DiscardTarget::Directory(PathBuf::from("src")));
+        let (_cancel_rect, confirm_rect) =
+            CodeReviewLayout::discard_dialog_buttons_rect(0.0, 0.0, 1000.0, 800.0);
+        let act_dir_confirm = CodeReviewLayout::hit_test(
+            &dir_dialog_model,
+            0.0,
+            0.0,
+            1000.0,
+            800.0,
+            confirm_rect.0 + 5.0,
+            confirm_rect.1 + 5.0,
+        );
+        assert_eq!(act_dir_confirm, Some(CodeReviewAction::ConfirmDiscardOk));
+
+        // Test DiscardTarget::All confirmation dialog hit test
+        let mut all_dialog_model = dir_model.clone();
+        all_dialog_model.confirm_discard = Some(DiscardTarget::All);
+        let act_all_confirm = CodeReviewLayout::hit_test(
+            &all_dialog_model,
+            0.0,
+            0.0,
+            1000.0,
+            800.0,
+            confirm_rect.0 + 5.0,
+            confirm_rect.1 + 5.0,
+        );
+        assert_eq!(act_all_confirm, Some(CodeReviewAction::ConfirmDiscardOk));
+    }
+
+    #[test]
+    fn test_changes_and_staged_tree_hierarchy_consistency_and_sorting() {
+        let diff_files = vec![
+            FileDiff {
+                path: PathBuf::from("crates/akssora-terminal-renderer/src/sidebar.rs"),
+                old_path: None,
+                status: FileGitStatus::Modified,
+                hunks: vec![],
+                additions: 10,
+                deletions: 2,
+                is_binary: false,
+                line_count: 50,
+            },
+            FileDiff {
+                path: PathBuf::from("crates/akssora-terminal-renderer/src/header.rs"),
+                old_path: None,
+                status: FileGitStatus::Modified,
+                hunks: vec![],
+                additions: 5,
+                deletions: 0,
+                is_binary: false,
+                line_count: 30,
+            },
+        ];
+
+        let staged_diff = RepoDiff {
+            files: diff_files.clone(),
+            total_additions: 15,
+            total_deletions: 2,
+            files_changed: 2,
+        };
+        let unstaged_diff = RepoDiff {
+            files: diff_files,
+            total_additions: 15,
+            total_deletions: 2,
+            files_changed: 2,
+        };
+
+        let model = CodeReviewModel {
+            staged_diff,
+            unstaged_diff,
+            ..Default::default()
+        };
+
+        let items = model.visible_tree_items();
+
+        // 1. Both sections must compact the directory chain identically into "crates/akssora-terminal-renderer/src"
+        let staged_dir = items.iter().find(|it| {
+            matches!(
+                it,
+                CodeReviewTreeItem::Directory {
+                    is_staged: true,
+                    display_name,
+                    ..
+                } if display_name == "crates/akssora-terminal-renderer/src"
+            )
+        });
+        assert!(
+            staged_dir.is_some(),
+            "Staged directory chain should be compacted"
+        );
+
+        let unstaged_dir = items.iter().find(|it| {
+            matches!(
+                it,
+                CodeReviewTreeItem::Directory {
+                    is_staged: false,
+                    display_name,
+                    ..
+                } if display_name == "crates/akssora-terminal-renderer/src"
+            )
+        });
+        assert!(
+            unstaged_dir.is_some(),
+            "Changes directory chain should be compacted identically"
+        );
+
+        // 2. Both sections must sort files alphabetically: "header.rs" before "sidebar.rs"
+        let staged_files: Vec<_> = items
+            .iter()
+            .filter_map(|it| match it {
+                CodeReviewTreeItem::File {
+                    is_staged: true,
+                    display_name,
+                    depth,
+                    ..
+                } => Some((display_name.as_str(), *depth)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(staged_files, vec![("header.rs", 2), ("sidebar.rs", 2)]);
+
+        let unstaged_files: Vec<_> = items
+            .iter()
+            .filter_map(|it| match it {
+                CodeReviewTreeItem::File {
+                    is_staged: false,
+                    display_name,
+                    depth,
+                    ..
+                } => Some((display_name.as_str(), *depth)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(unstaged_files, vec![("header.rs", 2), ("sidebar.rs", 2)]);
+
+        // 3. Verify indentation consistency: depths match
+        if let (
+            Some(CodeReviewTreeItem::Directory { depth: sd, .. }),
+            Some(CodeReviewTreeItem::Directory { depth: ud, .. }),
+        ) = (staged_dir, unstaged_dir)
+        {
+            assert_eq!(
+                sd, ud,
+                "Directory depths between Staged and Changes must be identical"
+            );
+        }
+    }
+
+    #[test]
+    fn test_card_full_file_btn_geometry_and_hit_test() {
+        let mut model = CodeReviewModel::default();
+        let file = FileDiff {
+            path: PathBuf::from("src/main.rs"),
+            old_path: None,
+            status: FileGitStatus::Modified,
+            additions: 1,
+            deletions: 1,
+            hunks: Vec::new(),
+            is_binary: false,
+            line_count: 2,
+        };
+        model.diff.files.push(file);
+        model.sidebar_expanded = false;
+
+        let (vx, vy, vw, _vh) =
+            CodeReviewLayout::diff_viewport_rect(&model, 0.0, 0.0, 1000.0, 800.0);
+        let card_x = vx + 16.0;
+        let card_w = (vw - 32.0).max(100.0);
+        let card_y = vy + 12.0;
+
+        let (fx, fy, fw, fh) = CodeReviewLayout::card_full_file_btn_rect(card_x, card_y, card_w);
+        assert_eq!(
+            fw, 90.0,
+            "Full File button width should be 90.0px to fit label comfortably"
+        );
+        assert_eq!(fh, 24.0);
+
+        let (dx, _dy, _dw, _dh) = CodeReviewLayout::card_discard_btn_rect(card_x, card_y, card_w);
+        assert!(
+            fx + fw <= dx,
+            "Full File button right edge ({}) must be <= discard button left edge ({})",
+            fx + fw,
+            dx
+        );
+        assert_eq!(
+            dx - (fx + fw),
+            8.0,
+            "Spacing between Full File button and discard button should be 8.0px"
+        );
+
+        let hit = CodeReviewLayout::hit_test(&model, 0.0, 0.0, 1000.0, 800.0, fx + 10.0, fy + 10.0);
+        assert_eq!(hit, Some(CodeReviewAction::ToggleFullFile(0)));
     }
 }

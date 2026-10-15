@@ -18,8 +18,8 @@ pub mod tooltip;
 
 pub use code_review::{
     CodeReviewAction, CodeReviewGutterHover, CodeReviewLayout, CodeReviewModel,
-    CodeReviewSidebarMode, CodeReviewTreeItem, DiffViewMode, LineActionPopupGeometry,
-    ReviewComment,
+    CodeReviewSidebarMode, CodeReviewTreeItem, DiffViewMode, DiscardTarget,
+    LineActionPopupGeometry, ReviewComment,
 };
 
 pub use context_menu::{ContextMenu, ContextMenuAction, ContextMenuItem};

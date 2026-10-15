@@ -255,11 +255,38 @@ impl GitInspector {
         repo_root: impl AsRef<Path>,
         file_path: impl AsRef<Path>,
     ) -> Result<(), String> {
+        let root = repo_root.as_ref();
+        let path = file_path.as_ref();
         let output = Command::new("git")
             .arg("checkout")
             .arg("HEAD")
             .arg("--")
-            .arg(file_path.as_ref())
+            .arg(path)
+            .current_dir(root)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            // If checkout failed, check if file is untracked and remove it
+            let full_path = root.join(path);
+            if full_path.exists() {
+                if full_path.is_dir() {
+                    let _ = std::fs::remove_dir_all(&full_path);
+                } else {
+                    let _ = std::fs::remove_file(&full_path);
+                }
+                Ok(())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).to_string())
+            }
+        }
+    }
+
+    pub fn stage_all(repo_root: impl AsRef<Path>) -> Result<(), String> {
+        let output = Command::new("git")
+            .arg("add")
+            .arg("-A")
             .current_dir(repo_root)
             .output()
             .map_err(|e| e.to_string())?;
@@ -268,6 +295,75 @@ impl GitInspector {
         } else {
             Err(String::from_utf8_lossy(&output.stderr).to_string())
         }
+    }
+
+    pub fn unstage_all(repo_root: impl AsRef<Path>) -> Result<(), String> {
+        let output = Command::new("git")
+            .arg("restore")
+            .arg("--staged")
+            .arg(".")
+            .current_dir(repo_root)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).to_string())
+        }
+    }
+
+    pub fn discard_all_changes(repo_root: impl AsRef<Path>) -> Result<(), String> {
+        let root = repo_root.as_ref();
+        let _ = Command::new("git")
+            .arg("checkout")
+            .arg("HEAD")
+            .arg("--")
+            .arg(".")
+            .current_dir(root)
+            .output();
+        let _ = Command::new("git")
+            .arg("clean")
+            .arg("-fd")
+            .current_dir(root)
+            .output();
+        Ok(())
+    }
+
+    pub fn stage_directory(
+        repo_root: impl AsRef<Path>,
+        dir_path: impl AsRef<Path>,
+    ) -> Result<(), String> {
+        Self::stage_file(repo_root, dir_path)
+    }
+
+    pub fn unstage_directory(
+        repo_root: impl AsRef<Path>,
+        dir_path: impl AsRef<Path>,
+    ) -> Result<(), String> {
+        Self::unstage_file(repo_root, dir_path)
+    }
+
+    pub fn discard_directory_changes(
+        repo_root: impl AsRef<Path>,
+        dir_path: impl AsRef<Path>,
+    ) -> Result<(), String> {
+        let root = repo_root.as_ref();
+        let path = dir_path.as_ref();
+        let _ = Command::new("git")
+            .arg("checkout")
+            .arg("HEAD")
+            .arg("--")
+            .arg(path)
+            .current_dir(root)
+            .output();
+        let _ = Command::new("git")
+            .arg("clean")
+            .arg("-fd")
+            .arg("--")
+            .arg(path)
+            .current_dir(root)
+            .output();
+        Ok(())
     }
 
     pub fn commit(repo_root: impl AsRef<Path>, message: &str) -> Result<String, String> {

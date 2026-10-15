@@ -120,11 +120,7 @@ pub(crate) fn handle_editor_shortcuts(
         if let Some(doc) = app.active_editor_mut() {
             let _ = doc.save();
         }
-        let is_code_review = app
-            .tab_manager
-            .active_tab()
-            .map(|t| matches!(t.kind, akssora_terminal_ui::TabKind::CodeReview { .. }))
-            .unwrap_or(false);
+        let is_code_review = app.is_code_review_open();
         if is_code_review {
             app.request_code_review_diff_reload();
         }
@@ -136,6 +132,44 @@ pub(crate) fn handle_editor_shortcuts(
     }
 
     if let Some(doc) = app.active_editor_mut() {
+        // Copy: Ctrl+C
+        if ctrl
+            && !shift
+            && matches!(&event.logical_key, Key::Character(s) if s.eq_ignore_ascii_case("c"))
+        {
+            if let Some(text) = doc.selected_text() {
+                akssora_terminal_input::set_clipboard_text(&text);
+                return true;
+            }
+        }
+        // Cut: Ctrl+X
+        if ctrl
+            && !shift
+            && matches!(&event.logical_key, Key::Character(s) if s.eq_ignore_ascii_case("x"))
+        {
+            if let Some(text) = doc.selected_text() {
+                akssora_terminal_input::set_clipboard_text(&text);
+                doc.delete_selection();
+                if let Some(win) = app.window.as_ref() {
+                    win.request_redraw();
+                }
+                return true;
+            }
+        }
+        // Paste: Ctrl+V
+        if ctrl
+            && !shift
+            && matches!(&event.logical_key, Key::Character(s) if s.eq_ignore_ascii_case("v"))
+        {
+            if let Some(text) = akssora_terminal_input::get_clipboard_text() {
+                doc.delete_selection();
+                doc.insert_str(&text);
+                if let Some(win) = app.window.as_ref() {
+                    win.request_redraw();
+                }
+                return true;
+            }
+        }
         // Undo: Ctrl+Z
         if ctrl
             && !shift

@@ -116,6 +116,10 @@ impl Terminal {
         self.grid.scroll_down_view(n);
     }
 
+    pub fn reset_scroll(&mut self) {
+        self.grid.reset_scroll();
+    }
+
     pub fn is_closed(&self) -> bool {
         self.closed
     }
@@ -151,6 +155,7 @@ impl Terminal {
 
     // INFO: Safely pastes clipboard text, using bracketed paste mode if active or normalized newline escaping.
     pub fn paste_text(&mut self, text: &str) {
+        self.reset_scroll();
         if self.parser.bracketed_paste {
             let mut payload = Vec::with_capacity(text.len() + 16);
             payload.extend_from_slice(b"\x1b[200~");

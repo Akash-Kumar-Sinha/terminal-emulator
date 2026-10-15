@@ -210,12 +210,12 @@ pub fn render_card_header(
         let is_discard_hovered = hovered_action == Some(&CodeReviewAction::DiscardFile(file_idx));
 
         // 0. Full File toggle button
-        let full_file_bg = if is_full_file_hovered {
-            theme.code_review_action_button_hover
+        let (full_file_bg, ff_color) = if is_full_file_hovered {
+            (theme.code_review_action_button_hover, theme.text_primary)
         } else if is_full_file_active {
-            theme.diff_stats_pill_background
+            (theme.header_button_active_background, theme.text_primary)
         } else {
-            theme.code_review_header_button_background
+            (theme.diff_stats_pill_background, theme.text_primary)
         };
         push_rounded_rect(
             verts,
@@ -236,11 +236,6 @@ pub fn render_card_header(
             "Full File"
         };
         let ff_text_w = full_file_label.len() as f32 * ui_fonts.cell_w;
-        let ff_color = if is_full_file_active || is_full_file_hovered {
-            theme.text_primary
-        } else {
-            theme.text_secondary
-        };
         renderer.render_text(
             queue,
             ui_fonts,

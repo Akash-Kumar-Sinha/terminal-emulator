@@ -6,15 +6,12 @@ pub fn check_code_review_tooltip(
     app: &App,
     mx: f32,
     my: f32,
-    sb_w: f32,
-    exp_w: f32,
-    window_w: f32,
-    window_h: f32,
+    _sb_w: f32,
+    _exp_w: f32,
+    _window_w: f32,
+    _window_h: f32,
 ) -> Option<Tooltip> {
-    let ws_x = sb_w + exp_w;
-    let ws_y = app.header.height;
-    let ws_w = (window_w - ws_x).max(100.0);
-    let ws_h = (window_h - ws_y).max(100.0);
+    let (ws_x, ws_y, ws_w, ws_h) = app.code_review_bounds()?;
 
     if let Some((_row, Some(action))) = app.editor_hovered_gutter {
         let rect = (mx - 10.0, my - 10.0, 20.0, 20.0);
@@ -36,6 +33,15 @@ pub fn check_code_review_tooltip(
     ) {
         let target_rect = (mx - 20.0, my - 10.0, 40.0, 20.0);
         match action {
+            CodeReviewAction::ToggleExpandView => Some(Tooltip::for_target(
+                if app.code_review.is_full_view {
+                    "Restore Split View"
+                } else {
+                    "Expand Code Review"
+                },
+                None,
+                target_rect,
+            )),
             CodeReviewAction::ToggleSidebar => Some(Tooltip::for_target(
                 "Toggle Files Sidebar",
                 None,
@@ -80,21 +86,78 @@ pub fn check_code_review_tooltip(
                 None,
                 target_rect,
             )),
-            CodeReviewAction::OpenFileInEditor(_) => Some(Tooltip::for_target(
-                "Open File in Editor",
-                None,
-                target_rect,
-            )),
-            CodeReviewAction::StageFile(_) => {
+            CodeReviewAction::ToggleFullFile(idx) => {
+                let is_full = app
+                    .code_review
+                    .diff
+                    .files
+                    .get(idx)
+                    .map(|f| app.code_review.is_full_file(&f.path))
+                    .unwrap_or(false);
+                Some(Tooltip::for_target(
+                    if is_full {
+                        "Show Diff Only"
+                    } else {
+                        "Show Full File"
+                    },
+                    None,
+                    target_rect,
+                ))
+            }
+            CodeReviewAction::OpenFileInEditor(_) | CodeReviewAction::OpenFileInEditorByPath(_) => {
+                Some(Tooltip::for_target(
+                    "Open File in Editor",
+                    None,
+                    target_rect,
+                ))
+            }
+            CodeReviewAction::StageFile(_) | CodeReviewAction::StageFileByPath(_) => {
                 Some(Tooltip::for_target("Stage File Changes", None, target_rect))
             }
-            CodeReviewAction::UnstageFile(_) => Some(Tooltip::for_target(
-                "Unstage File Changes",
+            CodeReviewAction::UnstageFile(_) | CodeReviewAction::UnstageFileByPath(_) => Some(
+                Tooltip::for_target("Unstage File Changes", None, target_rect),
+            ),
+            CodeReviewAction::DiscardFile(_)
+            | CodeReviewAction::DiscardFileByPath(_)
+            | CodeReviewAction::PromptDiscardFile(_) => Some(Tooltip::for_target(
+                "Discard Changes to File",
                 None,
                 target_rect,
             )),
-            CodeReviewAction::DiscardFile(_) => Some(Tooltip::for_target(
-                "Discard Changes to File",
+            CodeReviewAction::StageDirectoryByPath(_) => Some(Tooltip::for_target(
+                "Stage Folder Changes",
+                None,
+                target_rect,
+            )),
+            CodeReviewAction::UnstageDirectoryByPath(_) => Some(Tooltip::for_target(
+                "Unstage Folder Changes",
+                None,
+                target_rect,
+            )),
+            CodeReviewAction::PromptDiscardDirectory(_) => Some(Tooltip::for_target(
+                "Discard Changes in Folder",
+                None,
+                target_rect,
+            )),
+            CodeReviewAction::StageAll => {
+                Some(Tooltip::for_target("Stage All Changes", None, target_rect))
+            }
+            CodeReviewAction::UnstageAll => Some(Tooltip::for_target(
+                "Unstage All Changes",
+                None,
+                target_rect,
+            )),
+            CodeReviewAction::PromptDiscardAll => Some(Tooltip::for_target(
+                "Discard All Changes",
+                None,
+                target_rect,
+            )),
+            CodeReviewAction::ToggleSectionCollapse(is_staged) => Some(Tooltip::for_target(
+                if is_staged {
+                    "Toggle Staged Changes"
+                } else {
+                    "Toggle Changes"
+                },
                 None,
                 target_rect,
             )),
@@ -108,9 +171,7 @@ pub fn check_code_review_tooltip(
                 None,
                 target_rect,
             )),
-            CodeReviewAction::SelectFile(_) => {
-                Some(Tooltip::for_target("View File Diff", None, target_rect))
-            }
+            CodeReviewAction::SelectFile(_) | CodeReviewAction::SelectTreeFile { .. } => None,
             _ => None,
         }
     } else {
